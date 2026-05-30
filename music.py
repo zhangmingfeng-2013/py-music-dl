@@ -662,7 +662,7 @@ class MusicDownloader:
         print("═" * 45)
         print("           🎵  音乐下载器 v1.0  🎵")
         print("                多平台聚合")
-        print("     支持：咪咕 | 网易云 | QQ音乐 | 酷我\n")
+        print("     支持：咪咕 | 网易云 | QQ音乐 | 酷我")
         print("            咪咕可能获取有问题")
         print("═" * 45)
 
