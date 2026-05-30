@@ -553,9 +553,9 @@ class MusicDownloader:
             print("[!] 没有找到歌曲")
             return -1
 
-        print("\n" + "=" * 90)
+        print("\n" + "═" * 90)
         print(f"{'序号':<6}{'歌曲名':<32}{'歌手':<22}{'来源':<12}{'音质':>8}")
-        print("=" * 90)
+        print("═" * 90)
 
         for i, song in enumerate(songs, 1):
             name = song.get("title", "") or song.get("name", "")
@@ -570,7 +570,7 @@ class MusicDownloader:
 
             print(f"{i:<6}{name:<32}{artist:<22}{src:<12}{quality:>8}")
 
-        print("=" * 90)
+        print("═" * 90)
 
         while True:
             try:
@@ -704,9 +704,9 @@ class MusicDownloader:
         self.download_mp3(title, artist, audio_url, quality)
 
         # 完成
-        print("\n" + "=" * 60)
+        print("\n" + "═" * 45)
         print(f"     下载任务完成，文件保存在 {DOWNLOAD_DIR}/ 目录")
-        print("=" * 60)
+        print("═" * 45)
 
 
 # ===================== 程序入口 =====================
