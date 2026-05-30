@@ -11,10 +11,59 @@
 """
 
 import os
+import json
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from music import MusicAPI, MusicDownloader, safe_filename, format_size, DOWNLOAD_DIR
+
+
+class SearchHistory:
+    """搜索历史管理类"""
+
+    def __init__(self, history_file="search_history.json", max_items=20):
+        self.history_file = history_file
+        self.max_items = max_items
+        self.history = self._load_history()
+
+    def _load_history(self):
+        """加载历史记录"""
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                return []
+        return []
+
+    def _save_history(self):
+        """保存历史记录"""
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(self.history, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def add(self, keyword):
+        """添加搜索关键词"""
+        if not keyword or not keyword.strip():
+            return
+        keyword = keyword.strip()
+        if keyword in self.history:
+            self.history.remove(keyword)
+        self.history.insert(0, keyword)
+        if len(self.history) > self.max_items:
+            self.history = self.history[:self.max_items]
+        self._save_history()
+
+    def get_all(self):
+        """获取所有历史记录"""
+        return self.history.copy()
+
+    def clear(self):
+        """清空历史记录"""
+        self.history = []
+        self._save_history()
 
 
 class MusicDownloaderGUI:
@@ -32,6 +81,10 @@ class MusicDownloaderGUI:
 
         # 当前搜索结果
         self.search_results = []
+        self.filtered_results = []
+
+        # 搜索历史管理
+        self.search_history = SearchHistory()
 
         # 下载目录
         self.download_dir = DOWNLOAD_DIR
@@ -54,12 +107,19 @@ class MusicDownloaderGUI:
         search_frame = ttk.LabelFrame(main_frame, text="搜索音乐", padding="10")
         search_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         search_frame.columnconfigure(0, weight=1)
+        search_frame.columnconfigure(2, weight=1)
 
+        # 搜索建议下拉框
         ttk.Label(search_frame, text="歌曲名：").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
-        self.search_entry = ttk.Entry(search_frame, font=("Arial", 12))
-        self.search_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
-        self.search_entry.focus_set()
-        self.search_entry.bind("<Return>", lambda e: self._on_search())
+        self.search_var = tk.StringVar()
+        self.search_combo = ttk.Combobox(search_frame, textvariable=self.search_var, 
+                                         font=("Arial", 12))
+        self.search_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.search_combo['values'] = self.search_history.get_all()
+        self.search_combo.bind('<<ComboboxSelected>>', self._on_combo_select)
+        self.search_combo.bind('<KeyRelease>', self._on_search_keyrelease)
+        self.search_combo.bind('<Return>', lambda e: self._on_search())
+        self.search_combo.focus_set()
 
         self.search_btn = ttk.Button(search_frame, text="🔍 搜索", command=self._on_search)
         self.search_btn.grid(row=0, column=2, padx=5)
@@ -72,14 +132,39 @@ class MusicDownloaderGUI:
         self.browse_btn = ttk.Button(search_frame, text="📂 选择", command=self._browse_dir)
         self.browse_btn.grid(row=1, column=2, padx=5, pady=(10, 0))
 
-        # 2. 进度和状态信息
+        # 2. 筛选区域
+        filter_frame = ttk.LabelFrame(main_frame, text="筛选结果", padding="5")
+        filter_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        filter_frame.columnconfigure(1, weight=1)
+        filter_frame.columnconfigure(3, weight=1)
+
+        ttk.Label(filter_frame, text="歌手：").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        self.artist_filter_var = tk.StringVar()
+        self.artist_filter_combo = ttk.Combobox(filter_frame, textvariable=self.artist_filter_var,
+                                                font=("Arial", 10), state='readonly')
+        self.artist_filter_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.artist_filter_combo.bind('<<ComboboxSelected>>', self._on_filter_change)
+        self.artist_filter_combo['values'] = ['全部']
+
+        ttk.Label(filter_frame, text="平台：").grid(row=0, column=2, sticky=tk.W, padx=(10, 5))
+        self.source_filter_var = tk.StringVar()
+        self.source_filter_combo = ttk.Combobox(filter_frame, textvariable=self.source_filter_var,
+                                                 font=("Arial", 10), state='readonly')
+        self.source_filter_combo.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=5)
+        self.source_filter_combo['values'] = ['全部']
+        self.source_filter_combo.bind('<<ComboboxSelected>>', self._on_filter_change)
+
+        self.clear_filter_btn = ttk.Button(filter_frame, text="清除筛选", command=self._clear_filter)
+        self.clear_filter_btn.grid(row=0, column=4, padx=(10, 0))
+
+        # 3. 进度和状态信息
         self.status_var = tk.StringVar(value="准备就绪")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+        status_bar.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
 
-        # 3. 结果表格
+        # 4. 结果表格
         results_frame = ttk.LabelFrame(main_frame, text="搜索结果", padding="10")
-        results_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        results_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         results_frame.columnconfigure(0, weight=1)
         results_frame.rowconfigure(0, weight=1)
 
@@ -109,9 +194,9 @@ class MusicDownloaderGUI:
         # 双击下载
         self.tree.bind("<Double-1>", lambda e: self._on_download_selected())
 
-        # 4. 操作按钮
+        # 5. 操作按钮
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=1, column=0, columnspan=2, pady=5)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=5)
 
         self.download_btn = ttk.Button(button_frame, text="⬇️ 下载选中歌曲", command=self._on_download_selected, state=tk.DISABLED)
         self.download_btn.grid(row=0, column=0, padx=5)
@@ -120,9 +205,11 @@ class MusicDownloaderGUI:
 
         ttk.Button(button_frame, text="❌ 清空结果", command=self._clear_results).grid(row=0, column=2, padx=5)
 
-        # 日志区域
+        ttk.Button(button_frame, text="📋 清空历史", command=self._clear_history).grid(row=0, column=3, padx=5)
+
+        # 6. 日志区域
         log_frame = ttk.LabelFrame(main_frame, text="日志", padding="10")
-        log_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+        log_frame.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
         log_frame.columnconfigure(0, weight=1)
 
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED)
@@ -134,6 +221,103 @@ class MusicDownloaderGUI:
         self.log_text.insert(tk.END, message + "\n")
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
+
+    def _on_combo_select(self, event=None):
+        """下拉框选择事件"""
+        selected = self.search_var.get()
+        if selected:
+            self._on_search()
+
+    def _on_search_keyrelease(self, event):
+        """键盘释放事件，用于搜索建议"""
+        current_text = self.search_var.get()
+        if not current_text:
+            return
+        
+        # 获取匹配的历史记录
+        history = self.search_history.get_all()
+        matches = [h for h in history if current_text.lower() in h.lower()]
+        
+        if matches:
+            self.search_combo['values'] = matches
+            # 自动弹出下拉列表
+            self.search_combo.event_generate('<Button-1>')
+        else:
+            # 没有匹配时显示所有历史
+            self.search_combo['values'] = history
+
+    def _on_filter_change(self, event=None):
+        """筛选条件改变时重新显示结果"""
+        artist_filter = self.artist_filter_var.get()
+        source_filter = self.source_filter_var.get()
+
+        # 应用筛选
+        self.filtered_results = []
+        for song in self.search_results:
+            # 按歌手筛选
+            if artist_filter != '全部':
+                artist = song.get("artist", "") or song.get("singer", "")
+                if artist_filter not in artist:
+                    continue
+
+            # 按平台筛选
+            if source_filter != '全部':
+                source = song.get("source_name", "")
+                if source_filter != source:
+                    continue
+
+            self.filtered_results.append(song)
+
+        # 更新显示
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        for idx, song in enumerate(self.filtered_results, 1):
+            title = song.get("title", "") or song.get("name", "")
+            artist = song.get("artist", "") or song.get("singer", "")
+            source = song.get("source_name", song.get("source", "?"))
+            quality = song.get("quality", "?")
+
+            if len(title) > 30:
+                title = title[:27] + "..."
+            if len(artist) > 20:
+                artist = artist[:17] + "..."
+
+            self.tree.insert("", tk.END, values=(idx, title, artist, source, quality))
+
+        self.status_var.set(f"筛选结果: {len(self.filtered_results)} 首歌曲")
+
+    def _clear_filter(self):
+        """清除筛选条件"""
+        self.artist_filter_var.set('全部')
+        self.source_filter_var.set('全部')
+        self.filtered_results = self.search_results.copy()
+        self._on_filter_change()
+
+    def _clear_history(self):
+        """清空搜索历史"""
+        self.search_history.clear()
+        self.search_combo['values'] = []
+        messagebox.showinfo("提示", "搜索历史已清空")
+
+    def _update_filter_options(self):
+        """更新筛选选项"""
+        artists = set()
+        sources = set()
+        
+        for song in self.search_results:
+            artist = song.get("artist", "") or song.get("singer", "")
+            if artist:
+                artists.add(artist)
+            
+            source = song.get("source_name", "")
+            if source:
+                sources.add(source)
+        
+        self.artist_filter_combo['values'] = ['全部'] + sorted(list(artists))
+        self.source_filter_combo['values'] = ['全部'] + sorted(list(sources))
+        self.artist_filter_var.set('全部')
+        self.source_filter_var.set('全部')
 
     def _browse_dir(self):
         """浏览选择下载目录"""
@@ -152,15 +336,21 @@ class MusicDownloaderGUI:
         for item in self.tree.get_children():
             self.tree.delete(item)
         self.search_results = []
+        self.filtered_results = []
         self.download_btn.config(state=tk.DISABLED)
         self._log("已清空搜索结果")
+        self._clear_filter()
 
     def _on_search(self):
         """搜索按钮回调"""
-        keyword = self.search_entry.get().strip()
+        keyword = self.search_var.get().strip()
         if not keyword:
             messagebox.showwarning("提示", "请输入要搜索的歌曲名")
             return
+
+        # 添加到历史记录
+        self.search_history.add(keyword)
+        self.search_combo['values'] = self.search_history.get_all()
 
         # 禁用搜索按钮防止重复点击
         self.search_btn.config(state=tk.DISABLED)
@@ -175,13 +365,15 @@ class MusicDownloaderGUI:
         """搜索线程"""
         try:
             results = self.downloader.search_all(keyword)
-            self.search_results = results
+            self.search_results = results.copy()
+            self.filtered_results = results.copy()
 
             if results:
                 # 在主线程更新UI
                 self.root.after(0, self._populate_results, results)
-                self._log(f"搜索完成，找到 {len(results)} 首歌曲")
                 self.root.after(0, lambda: self.status_var.set(f"找到 {len(results)} 首歌曲"))
+                self.root.after(0, self._update_filter_options)
+                self._log(f"搜索完成，找到 {len(results)} 首歌曲")
             else:
                 self._log("未找到相关歌曲")
                 self.root.after(0, lambda: self.status_var.set("未找到相关歌曲"))
@@ -219,7 +411,7 @@ class MusicDownloaderGUI:
 
         item = selected[0]
         idx = int(self.tree.item(item, "values")[0]) - 1
-        song = self.search_results[idx]
+        song = self.filtered_results[idx]
 
         title = song.get("title") or song.get("name", "")
         artist = song.get("artist") or song.get("singer", "")
