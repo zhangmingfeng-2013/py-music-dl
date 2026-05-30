@@ -483,56 +483,7 @@ class BS4Demo:
         BeautifulSoup 核心 API 速览
         用一段示例 HTML 演示 bs4 的常用操作
         """
-        print("\n" + "=" * 60)
-        print("  【学习模块】BeautifulSoup 核心 API 速览")
-        print("=" * 60)
-
-        sample_html = """
-        <!DOCTYPE html>
-        <html lang="zh">
-        <head>
-            <title>皮卡丘的音乐站</title>
-            <meta charset="UTF-8">
-        </head>
-        <body>
-            <header>
-                <h1 class="site-title">皮卡丘的音乐站</h1>
-                <p class="subtitle">作者：Zhenchao Jin + GPT 5.1</p>
-            </header>
-            <main>
-                <div class="search-panel" id="search-box">
-                    <input type="text" id="search-input" placeholder="输入歌名搜索...">
-                    <button class="btn-primary">搜索</button>
-                </div>
-                <div class="results">
-                    <ul id="song-list">
-                        <li class="song-item" data-id="1" data-source="migu">
-                            <span class="song-name">晴天</span>
-                            <span class="artist">周杰伦</span>
-                            <span class="quality lossless">LOSSLESS</span>
-                        </li>
-                        <li class="song-item" data-id="2" data-source="netease">
-                            <span class="song-name">七里香</span>
-                            <span class="artist">周杰伦</span>
-                            <span class="quality hq">320K</span>
-                        </li>
-                        <li class="song-item vip" data-id="3" data-source="qq">
-                            <span class="song-name">夜曲</span>
-                            <span class="artist">周杰伦</span>
-                            <span class="quality lossless">LOSSLESS</span>
-                        </li>
-                    </ul>
-                </div>
-            </main>
-            <footer>
-                <p>音乐版权归各平台与原作者所有</p>
-            </footer>
-        </body>
-        </html>
-        """
-
-        soup = BeautifulSoup(sample_html, "lxml")
-
+        pass
 
 
 # ===================== 下载管理器 =====================
@@ -709,20 +660,14 @@ class MusicDownloader:
     def run(self):
         """主运行入口"""
         # 显示欢迎界面
-        print("\n" + "=" * 60)
+        print("=" * 60)
         print("     🎵  音乐下载器 v1.0  🎵")
-        print("     多平台聚合 · requests + BeautifulSoup")
+        print("     多平台聚合 · requests")
         print("     支持：咪咕 | 网易云 | QQ音乐 | 酷我")
         print("=" * 60)
 
-        # BS4 教学演示
-        self.bs4_demo.demo_bs4_api()
-        print("\n" + "~" * 60)
-        self.bs4_demo.scrape_musicdl_page()
-
         # 输入关键词
-        print("\n" + "~" * 60)
-        keyword = input("\n请输入要搜索的歌曲名：").strip()
+        keyword = input("请输入要搜索的歌曲名：").strip()
         if not keyword:
             print("[!] 歌曲名不能为空，程序退出")
             return
