@@ -13,7 +13,6 @@
 import os
 import re
 import json
-import time
 import requests
 import urllib3
 from bs4 import BeautifulSoup
