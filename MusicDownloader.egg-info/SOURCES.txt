@@ -1,7 +1,0 @@
-LICENSE
-README.md
-setup.py
-MusicDownloader.egg-info/PKG-INFO
-MusicDownloader.egg-info/SOURCES.txt
-MusicDownloader.egg-info/dependency_links.txt
-MusicDownloader.egg-info/top_level.txt
