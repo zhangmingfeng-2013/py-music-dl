@@ -768,7 +768,7 @@ class MusicDownloader:
         """主运行入口"""
         # 显示欢迎界面
         print("\n" + "=" * 60)
-        print("     🎵  音乐下载器 v6.1  🎵")
+        print("     🎵  音乐下载器 v1.0  🎵")
         print("     多平台聚合 · requests + BeautifulSoup")
         print("     支持：咪咕 | 网易云 | QQ音乐 | 酷我")
         print("=" * 60)
