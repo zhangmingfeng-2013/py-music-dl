@@ -535,62 +535,6 @@ class BS4Demo:
 
         soup = BeautifulSoup(sample_html, "lxml")
 
-        # --- 1. 按标签名查找 ---
-        print("\n1. 按标签名查找 (find / find_all):")
-        print(f"   soup.find('title').text    → {soup.find('title').text}")
-        print(f"   len(soup.find_all('li'))   → {len(soup.find_all('li'))} 个 <li>")
-
-        # --- 2. 按 class 查找 ---
-        print("\n2. 按 class 查找 (class_=...):")
-        items = soup.find_all("li", class_="song-item")
-        print(f"   找到 {len(items)} 首歌曲:")
-        for item in items:
-            name = item.find("span", class_="song-name")
-            artist = item.find("span", class_="artist")
-            quality = item.find("span", class_="quality")
-            if name and artist:
-                q = quality.text if quality else "?"
-                print(f"     · {name.text} — {artist.text} [{q}]")
-
-        # --- 3. CSS 选择器 ---
-        print("\n3. CSS 选择器 (select / select_one):")
-        all_names = soup.select(".song-name")
-        print(f"   soup.select('.song-name')  → {[n.text for n in all_names]}")
-        vip = soup.select_one("li.vip .song-name")
-        print(f"   soup.select_one('li.vip')  → {vip.text if vip else '无'}")
-
-        # --- 4. 属性选择器 ---
-        print("\n4. 属性选择器:")
-        migu_songs = soup.select("li[data-source='migu']")
-        print(f"   li[data-source='migu']     → {len(migu_songs)} 首")
-        lossless = soup.select(".quality.lossless")
-        print(f"   .quality.lossless          → {len(lossless)} 首无损")
-
-        # --- 5. 获取属性 ---
-        print("\n5. 获取元素属性 (get / [ ]):")
-        first_li = soup.find("li")
-        print(f"   li.get('data-id')          → {first_li.get('data-id')}")
-        print(f"   li['data-source']          → {first_li['data-source']}")
-
-        # --- 6. 导航DOM树 ---
-        print("\n6. DOM 树导航 (parent / siblings):")
-        name_span = soup.find("span", string="七里香")
-        parent_li = name_span.find_parent("li")
-        print(f"   span.find_parent('li')     → data-id={parent_li.get('data-id')}")
-        next_li = parent_li.find_next_sibling("li")
-        if next_li:
-            n = next_li.find("span", class_="song-name")
-            print(f"   li.find_next_sibling()    → {n.text if n else '?'}")
-
-        # --- 7. 文本提取 ---
-        print("\n7. 文本提取 (get_text / stripped_strings):")
-        footer = soup.find("footer")
-        if footer:
-            print(f"   footer.get_text(strip=True) → {footer.get_text(strip=True)}")
-
-        print("\n" + "=" * 60)
-        print("  ↑ 以上展示了 bs4 的 7 种核心用法，建议在实践中多加练习")
-        print("=" * 60)
 
 
 # ===================== 下载管理器 =====================
