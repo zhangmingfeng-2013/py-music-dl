@@ -510,7 +510,6 @@ class MusicDownloader:
         print("    " + "-" * 50)
 
         # 并发搜索四个平台
-        all_results = []
         platforms = [
             ("咪咕音乐", self.api.search_migu),
             ("网易云音乐", self.api.search_netease),
