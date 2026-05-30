@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: MusicDownloader
+Version: 1.0
+Summary: 音乐下载器
+License-File: LICENSE
+Dynamic: license-file
+Dynamic: summary
