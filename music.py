@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-音乐下载器 v6.1 (多平台聚合版 · requests + BeautifulSoup)
+音乐下载器 v1.0 (多平台聚合版 · requests + BeautifulSoup)
 功能：根据用户输入的歌曲名，从多平台搜索并下载MP3/FLAC音乐文件
 数据源：基于 http://qjjlb.quanjian.com.cn/musicdl/ 的聚合音乐站API
 支持平台：咪咕音乐 / 网易云音乐 / QQ音乐 / 酷我音乐

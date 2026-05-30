@@ -3,7 +3,11 @@
 
 """
 音乐下载器 GUI 版
-使用 tkinter 构建图形界面
+功能：根据用户输入的歌曲名，从多平台搜索并下载MP3/FLAC音乐文件
+数据源：基于 http://qjjlb.quanjian.com.cn/musicdl/ 的聚合音乐站API
+支持平台：咪咕音乐 / 网易云音乐 / QQ音乐 / 酷我音乐
+使用库：requests（网络请求）、bs4（HTML解析）、re（正则匹配）、tkinter（图形库）
+注意：仅供学习爬虫技术，请遵守网站协议和版权规定，勿用于商业用途
 """
 
 import os
