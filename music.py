@@ -659,11 +659,11 @@ class MusicDownloader:
     def run(self):
         """主运行入口"""
         # 显示欢迎界面
-        print("=" * 60)
-        print("     🎵  音乐下载器 v1.0  🎵")
-        print("     多平台聚合 · requests")
+        print("═" * 45)
+        print("           🎵  音乐下载器 v1.0  🎵")
+        print("                多平台聚合")
         print("     支持：咪咕 | 网易云 | QQ音乐 | 酷我")
-        print("=" * 60)
+        print("═" * 45)
 
         # 输入关键词
         keyword = input("请输入要搜索的歌曲名：").strip()
