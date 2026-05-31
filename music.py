@@ -32,7 +32,7 @@ HEADERS = {
 }
 
 DOWNLOAD_DIR = "downloaded_music"
-TIMEOUT = 15
+TIMEOUT = 10
 
 # ===================== 工具函数 =====================
 
