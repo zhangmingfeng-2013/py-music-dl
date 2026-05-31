@@ -704,9 +704,9 @@ class MusicDownloader:
         self.download_mp3(title, artist, audio_url, quality)
 
         # 完成
-        print("\n" + "═" * 45)
+        print("\n" + "═" * 52)
         print(f"     下载任务完成，文件保存在 {DOWNLOAD_DIR}/ 目录")
-        print("═" * 45)
+        print("═" * 52)
 
 
 # ===================== 程序入口 =====================
