@@ -35,7 +35,7 @@ pip install -r requirements.txt
 ## 快速开始
 
 ```bash
-python music.py
+python3 music.py
 ```
 
 运行后按提示操作：

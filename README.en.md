@@ -32,7 +32,7 @@ pip install -r requirements.txt
 ## Quick Start
 
 ```bash
-python music.py
+python3 music.py
 ```
 
 Follow the prompts after running:
