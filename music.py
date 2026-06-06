@@ -32,7 +32,7 @@ HEADERS = {
 }
 
 DOWNLOAD_DIR = "downloaded_music"
-TIMEOUT = 10
+TIMEOUT = 15
 
 # ===================== 工具函数 =====================
 
@@ -227,6 +227,15 @@ class MusicAPI:
                 rid = item.get("rid") or item.get("id") or item.get("musicrid", "")
                 # 酷我搜索接口已直接返回下载链接 url 字段
                 audio_url = item.get("url", "")
+                # 从 url 的 format 参数或文件扩展名确定音质
+                quality = "?"
+                if audio_url:
+                    if "format=" in audio_url:
+                        fmt = audio_url.split("format=")[-1].split("&")[0]
+                        quality = "LOSSLESS" if fmt in ("flac", "wav", "ape") else "320K"
+                    elif "." in audio_url.split("?")[0]:
+                        ext = audio_url.split("?")[0].rsplit(".", 1)[-1].lower()
+                        quality = "LOSSLESS" if ext in ("flac", "wav", "ape") else "320K"
                 results.append({
                     "source": "kuwo",
                     "title": item.get("name", "") or item.get("songname", ""),
@@ -236,6 +245,7 @@ class MusicAPI:
                     "keyword": keyword,
                     "cover": item.get("pic") or item.get("cover"),
                     "audio_url": audio_url,  # 搜索阶段已包含下载链接
+                    "quality": quality,
                 })
             return results
         except Exception as e:
@@ -243,7 +253,7 @@ class MusicAPI:
             return []
 
     @staticmethod
-    def get_migu_detail(track):
+    def get_migu_detail(track, quiet=False):
         """
         获取咪咕歌曲详情（含下载链接）
         复用同一个搜索接口，指定 n 参数定位歌曲
@@ -275,11 +285,12 @@ class MusicAPI:
                 detail["quality"] = "LOSSLESS" if ext in ("flac", "wav", "ape") else "320K"
             return detail
         except Exception as e:
-            print(f"    [✗] 咪咕详情获取失败: {e}")
+            if not quiet:
+                print(f"    [✗] 咪咕详情获取失败: {e}")
             return None
 
     @staticmethod
-    def get_netease_detail(track):
+    def get_netease_detail(track, quiet=False):
         """
         获取网易云歌曲详情（含下载链接）
         通过 meting API 获取音源
@@ -308,11 +319,12 @@ class MusicAPI:
                 detail["quality"] = "LOSSLESS" if ext in ("flac", "wav", "ape") else "320K"
             return detail
         except Exception as e:
-            print(f"    [✗] 网易云详情获取失败: {e}")
+            if not quiet:
+                print(f"    [✗] 网易云详情获取失败: {e}")
             return None
 
     @staticmethod
-    def get_qq_detail(track):
+    def get_qq_detail(track, quiet=False):
         """
         获取QQ音乐歌曲详情（含下载链接）
         通过 tang API 传入 mid 获取播放链接
@@ -351,7 +363,8 @@ class MusicAPI:
                 "quality": quality,
             }
         except Exception as e:
-            print(f"    [✗] QQ音乐详情获取失败: {e}")
+            if not quiet:
+                print(f"    [✗] QQ音乐详情获取失败: {e}")
             return None
 
     @staticmethod
@@ -545,7 +558,58 @@ class MusicDownloader:
                     added = True
 
         print(f"\n[✓] 共找到 {len(interleaved)} 首歌曲（已交错排列）")
+
+        # 批量预取音质（酷我已有，只需补咪咕/网易云/QQ音乐）
+        self._prefetch_quality(interleaved)
+
         return interleaved
+
+    def _prefetch_quality(self, songs):
+        """并行预取咪咕/网易云/QQ音乐的下载链接以确定音质"""
+        import concurrent.futures
+        import time
+
+        # 筛选需要获取音质的歌曲（酷我已在搜索阶段确定）
+        targets = [(i, s) for i, s in enumerate(songs)
+                   if s.get("source") in ("migu", "netease", "qq")
+                   and not s.get("quality")]
+
+        if not targets:
+            return
+
+        print(f"    [→] 预取音质信息（{len(targets)} 首）...")
+
+        def fetch_one(args):
+            idx, song = args
+            source = song.get("source")
+            # 重试最多 2 次（处理偶发超时）
+            for attempt in range(2):
+                try:
+                    if source == "migu":
+                        detail = self.api.get_migu_detail(song, quiet=True)
+                    elif source == "netease":
+                        detail = self.api.get_netease_detail(song, quiet=True)
+                    elif source == "qq":
+                        detail = self.api.get_qq_detail(song, quiet=True)
+                    else:
+                        return
+                    if detail and detail.get("quality"):
+                        songs[idx]["quality"] = detail["quality"]
+                    return  # 成功或确定无链接，不重试
+                except requests.RequestException:
+                    if attempt == 0:
+                        time.sleep(0.5)
+                        continue
+                except Exception:
+                    return
+                return
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            list(executor.map(fetch_one, targets))
+
+        # 统计结果
+        known = sum(1 for s in songs if s.get("quality") and s["quality"] != "?")
+        print(f"    [✓] 音质预取完成（{known}/{len(songs)} 首已知）")
 
     def display_songs(self, songs):
         """以表格形式展示歌曲列表"""
