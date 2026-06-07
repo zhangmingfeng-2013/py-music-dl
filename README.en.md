@@ -13,8 +13,6 @@
 
 ---
 
-> **Disclaimer**: This project is intended solely for learning Python web scraping, `requests`, and `BeautifulSoup`. Please comply with all platform terms of service and copyright laws. **Commercial use or copyright infringement is strictly prohibited.** Users assume full legal responsibility.
-
 ## ✨ Features
 
 - **Multi-platform Aggregated Search** — Simultaneously queries Migu, NetEase Cloud Music, QQ Music, and Kuwo Music with interleaved results
