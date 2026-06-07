@@ -507,7 +507,6 @@ class MusicDownloader:
 
     def __init__(self):
         self.api = MusicAPI()
-        self.bs4_demo = BS4Demo()
 
         if not os.path.exists(DOWNLOAD_DIR):
             os.makedirs(DOWNLOAD_DIR)
@@ -571,8 +570,8 @@ class MusicDownloader:
 
         # 筛选需要获取音质的歌曲（酷我已在搜索阶段确定）
         targets = [(i, s) for i, s in enumerate(songs)
-                   if s.get("source") in ("migu", "netease", "qq")
-                   and not s.get("quality")]
+        if s.get("source") in ("migu", "netease", "qq")
+        and not s.get("quality")]
 
         if not targets:
             return
@@ -676,8 +675,19 @@ class MusicDownloader:
         print(f"    [✗] 未获取到下载链接")
         return None
 
-    def download_mp3(self, title, artist, audio_url, quality=""):
-        """下载音乐文件"""
+    def download_mp3(self, title, artist, audio_url, quality="",
+                    download_dir=None, progress_callback=None, log_callback=None):
+        """下载音乐文件
+        Args:
+            title: 歌曲标题
+            artist: 歌手
+            audio_url: 下载链接
+            quality: 音质标签
+            download_dir: 自定义下载目录（默认 DOWNLOAD_DIR）
+            progress_callback: 进度回调 callback(percent:int) 或 callback(downloaded:int, total:int)
+            log_callback: 日志回调 callback(message:str)
+        """
+        directory = download_dir or DOWNLOAD_DIR
         safe_name = safe_filename(f"{artist} - {title}")
         # 根据音质选择扩展名
         if quality == "LOSSLESS":
@@ -689,9 +699,15 @@ class MusicDownloader:
             ext = "mp3"
 
         filename = f"{safe_name}.{ext}"
-        filepath = os.path.join(DOWNLOAD_DIR, filename)
+        filepath = os.path.join(directory, filename)
 
-        print(f"\n[*] 开始下载：{filename}")
+        def log(msg):
+            if log_callback:
+                log_callback(msg)
+            else:
+                print(msg)
+
+        log(f"\n[*] 开始下载：{filename}")
 
         try:
             resp = requests.get(audio_url, headers=HEADERS, stream=True,
@@ -700,7 +716,7 @@ class MusicDownloader:
 
             total_size = int(resp.headers.get("content-length", 0))
             if total_size > 0:
-                print(f"    文件大小：{format_size(total_size)}")
+                log(f"    文件大小：{format_size(total_size)}")
 
             downloaded = 0
             with open(filepath, "wb") as f:
@@ -708,17 +724,25 @@ class MusicDownloader:
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
-                        print_progress(downloaded, total_size)
+                        if progress_callback:
+                            # 尝试两种回调签名
+                            try:
+                                progress_callback(downloaded, total_size)
+                            except TypeError:
+                                if total_size > 0:
+                                    progress_callback(int(downloaded / total_size * 100))
+                        else:
+                            print_progress(downloaded, total_size)
 
-            print(f"\n[✓] 下载完成！保存位置：{filepath}")
-            return True
+            log(f"\n[✓] 下载完成！保存位置：{filepath}")
+            return True, filepath
 
         except requests.RequestException as e:
-            print(f"\n[✗] 下载失败：{e}")
-            return False
+            log(f"\n[✗] 下载失败：{e}")
+            return False, None
         except IOError as e:
-            print(f"\n[✗] 文件写入失败：{e}")
-            return False
+            log(f"\n[✗] 文件写入失败：{e}")
+            return False, None
 
     def run(self):
         """主运行入口"""

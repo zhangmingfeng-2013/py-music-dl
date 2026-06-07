@@ -13,9 +13,10 @@
 import os
 import json
 import threading
+import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
-from music import MusicAPI, MusicDownloader, safe_filename, format_size, DOWNLOAD_DIR
+from music import MusicDownloader, DOWNLOAD_DIR
 
 
 class SearchHistory:
@@ -76,7 +77,6 @@ class MusicDownloaderGUI:
         self.root.resizable(True, True)
 
         # 核心功能类
-        self.music_api = MusicAPI()
         self.downloader = MusicDownloader()
 
         # 当前搜索结果
@@ -240,8 +240,6 @@ class MusicDownloaderGUI:
         
         if matches:
             self.search_combo['values'] = matches
-            # 自动弹出下拉列表
-            self.search_combo.event_generate('<Button-1>')
         else:
             # 没有匹配时显示所有历史
             self.search_combo['values'] = history
@@ -329,7 +327,7 @@ class MusicDownloaderGUI:
     def _open_download_dir(self):
         """打开下载目录"""
         if os.path.exists(self.download_dir):
-            os.system(f"open '{self.download_dir}'")
+            subprocess.run(["open", self.download_dir])
 
     def _clear_results(self):
         """清空搜索结果"""
@@ -463,45 +461,21 @@ class MusicDownloaderGUI:
             self.root.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
 
     def _download_mp3(self, title, artist, audio_url, quality=""):
-        """下载音乐文件"""
-        import requests
-        from music import HEADERS
+        """下载音乐文件（委托给 MusicDownloader.download_mp3）"""
+        def progress_cb(downloaded, total):
+            if total > 0:
+                p = int(downloaded / total * 100)
+                self.root.after(0, lambda: self.status_var.set(f"下载中 {p}%"))
 
-        safe_name = safe_filename(f"{artist} - {title}")
-        if quality == "LOSSLESS":
-            ext = audio_url.split("?")[0].rsplit(".", 1)[-1].lower() if "." in audio_url.split("?")[0] else "mp3"
-        else:
-            ext = "mp3"
-        if ext not in ("mp3", "flac", "wav", "ape", "m4a", "ogg"):
-            ext = "mp3"
-
-        filename = f"{safe_name}.{ext}"
-        filepath = os.path.join(self.download_dir, filename)
-
-        try:
-            resp = requests.get(audio_url, headers=HEADERS, stream=True, timeout=120, verify=False)
-            resp.raise_for_status()
-
-            total_size = int(resp.headers.get("content-length", 0))
-            if total_size > 0:
-                self._log(f"文件大小: {format_size(total_size)}")
-
-            downloaded = 0
-            with open(filepath, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size > 0:
-                            percent = int(downloaded / total_size * 100)
-                            self.root.after(0, lambda p=percent: self.status_var.set(f"下载中 {p}%"))
-
+        success, filepath = self.downloader.download_mp3(
+            title, artist, audio_url, quality,
+            download_dir=self.download_dir,
+            progress_callback=progress_cb,
+            log_callback=self._log
+        )
+        if success:
             self._log(f"保存到: {filepath}")
-            return True
-
-        except Exception as e:
-            self._log(f"下载失败: {e}")
-            return False
+        return success
 
 
 def main():
