@@ -40,7 +40,7 @@
 
 ```bash
 # 1. 克隆项目
-git clone <repo-url> py-dl && cd py-dl
+git clone https://gitee.com/zhangmf9773/py-music-dl && cd py-music-dl
 
 # 2. 安装依赖
 pip install -r requirements.txt
@@ -78,7 +78,7 @@ python3 music_gui.py   # GUI 模式
 ### GUI 模式
 
 ```
-python3 music_gui.py
+python3 ./music_gui.py
 ```
 
 - 搜索框支持历史记录下拉补全

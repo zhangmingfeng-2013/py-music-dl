@@ -38,7 +38,7 @@
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url> py-dl && cd py-dl
+git clone https://gitee.com/zhangmf9773/py-music-dl && cd py-music-dl
 
 # 2. Install dependencies
 pip install -r requirements.txt
