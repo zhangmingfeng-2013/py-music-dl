@@ -135,12 +135,12 @@ Enter track numbers (e.g. 1,3,5-8 or all, 0 to quit): 1,3
 
 ## 🎯 Supported Platforms
 
-| Platform             | Search | Download | Quality          |
-|----------------------|:------:|:--------:|------------------|
-| Migu Music           |   ✅   |    ✅    | 320K / LOSSLESS  |
-| NetEase Cloud Music  |   ✅   |    ✅    | 320K / LOSSLESS  |
-| QQ Music             |   ✅   |    ✅    | 320K / LOSSLESS  |
-| Kuwo Music           |   ✅   |    ✅    | 320K / LOSSLESS  |
+| Platform              | Search  | Download  | Quality          |
+|-----------------------|:-------:|:---------:|------------------|
+| Migu Music            |    ✅    |     ✅     | 320K / LOSSLESS  |
+| NetEase Cloud Music   |    ✅    |     ✅     | 320K / LOSSLESS  |
+| QQ Music              |    ✅    |     ✅     | 320K / LOSSLESS  |
+| Kuwo Music            |    ✅    |     ✅     | 320K / LOSSLESS  |
 
 ## 📁 Project Structure
 
@@ -183,12 +183,12 @@ py-music-dl/
 ```python
 # api.py
 HEADERS = { ... }          # HTTP request headers
-TIMEOUT = 15               # Request timeout (seconds)
-MAX_WORKERS = 6            # Concurrent worker threads
+TIMEOUT = 10               # Request timeout (seconds)
+MAX_WORKERS = 10            # Concurrent worker threads
 
 # downloader.py
 CHUNK_SIZE = 8192          # Download chunk size (bytes)
-DEFAULT_TIMEOUT = 120      # Download timeout (seconds)
+DEFAULT_TIMEOUT = 60      # Download timeout (seconds)
 
 # utils.py
 DEFAULT_DOWNLOAD_DIR = "downloaded_music"  # Default download directory
@@ -212,7 +212,6 @@ DEFAULT_DOWNLOAD_DIR = "downloaded_music"  # Default download directory
 - Four-platform aggregated search & download
 - Concurrent quality prefetch with 6 workers
 - Tkinter GUI with search history & filters
-- BeautifulSoup tutorial module (`BS4Demo` class in `music.py`)
 
 ## 📄 License
 
