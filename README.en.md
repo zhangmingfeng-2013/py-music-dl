@@ -105,34 +105,6 @@ Enter track numbers (e.g. 1,3,5-8 or all, 0 to quit): 1,3
 ═────────────────────────────────────────────────────
 ```
 
-### GUI Mode — `python3 gui.py`
-
-```
-┌──────────────────────────────────────────────────┐
-│ 🔍 Search: [晴天               ▼] [Search]       │
-│ 📂 Directory: [downloaded_music    ] [Browse]    │
-├──────────────────────────────────────────────────┤
-│ Filter: [Artist ▼]  [Platform ▼]  [Clear]        │
-├──────────────────────────────────────────────────┤
-│  #    Title           Artist       Source   Qual  │
-│  1    晴天            周杰伦       Migu     320K  │
-│  2    晴天            周杰伦       NetEase   LOSSLESS│
-│ ...                                               │
-├──────────────────────────────────────────────────┤
-│ [⬇ Download Selected] [📥 Download All]           │
-├──────────────────────────────────────────────────┤
-│ Download Tasks                                    │
-│ ┌ 周杰伦 - 晴天 [████░░░░] 65%  ⏸  ✕ ┐           │
-│ ┌ 林俊杰 - 江南 [████████] 100% ✅    ┐           │
-│ ┌ Waiting...                         ┐           │
-├──────────────────────────────────────────────────┤
-│ [⏸ Pause All] [✕ Cancel All] [🗑 Clear Done]     │
-├──────────────────────────────────────────────────┤
-│ ✅ All downloads complete                         │
-│ Log: Found 40 tracks | Added 3 to queue ...       │
-└──────────────────────────────────────────────────┘
-```
-
 ## 🎯 Supported Platforms
 
 | Platform              | Search  | Download  | Quality          |
