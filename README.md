@@ -118,33 +118,33 @@ python3 gui.py       # GUI 模式（v2.0）
 
 ```
 py-music-dl/
-├── api.py                   # API 层 — 并发搜索 + 音质预取 + 详情获取
+├── api.py                       # API 层 — 并发搜索 + 音质预取 + 详情获取
 │   ├── search_all_platforms()   # ThreadPoolExecutor 4线程并发搜索
 │   ├── prefetch_quality()       # 6线程并发预取音质
 │   ├── get_song_detail()        # 获取歌曲下载链接
 │   └── _SEARCHERS / _DETAILERS  # 平台注册表（增删平台只需改字典）
-├── downloader.py            # 下载引擎 — 队列调度 + 断点续传 + 进度回调
+├── downloader.py                # 下载引擎 — 队列调度 + 断点续传 + 进度回调
 │   ├── DownloadTask             # 单任务状态机（7 种状态 + 暂停/取消事件）
 │   └── DownloadQueue            # 队列管理器（顺序下载、重试、回调通知）
-├── cli.py                   # CLI 入口 — 交互式命令行界面
+├── cli.py                       # CLI 入口 — 交互式命令行界面
 │   ├── _display_table()         # 搜索结果表格渲染
 │   ├── _multi_select()          # 多选解析（1,3,5-8 / all）
 │   └── _print_progress()        # 实时进度条
-├── gui.py                   # GUI 入口 — Tkinter 图形界面（v2.0 全新）
+├── gui.py                       # GUI 入口 — Tkinter 图形界面（v2.0 全新）
 │   ├── SearchHistory            # 搜索历史持久化管理
 │   ├── TaskRow                  # 任务面板行组件（进度条 + 控制按钮）
 │   └── MusicDownloaderGUI       # 主界面类（完整布局 + 队列回调）
-├── utils.py                 # 工具模块 — 格式化、日志、文件名校验
+├── utils.py                     # 工具模块 — 格式化、日志、文件名校验
 │   ├── safe_filename()          # 非法字符清理
 │   ├── format_size()            # 字节 → 可读大小
 │   ├── format_progress_bar()    # 文本进度条
 │   ├── quality_from_url()       # URL → 音质推断
 │   └── log                      # logging.Logger 实例
-├── music.py                 # [v1.0 参考] 巨石版 CLI（含 BS4Demo）
-├── music_gui.py             # [v1.0 参考] 旧版 GUI
-├── downloaded_music/        # 下载文件保存目录
-├── search_history.json      # 搜索历史持久化文件
-├── requirements.txt         # 依赖清单
+├── music.py                     # [v1.0 参考] 巨石版 CLI（含 BS4Demo）
+├── music_gui.py                 # [v1.0 参考] 旧版 GUI
+├── downloaded_music/            # 下载文件保存目录
+├── search_history.json          # 搜索历史持久化文件
+├── requirements.txt             # 依赖清单
 └── README.md
 ```
 

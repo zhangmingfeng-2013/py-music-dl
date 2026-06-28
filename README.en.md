@@ -118,33 +118,33 @@ Enter track numbers (e.g. 1,3,5-8 or all, 0 to quit): 1,3
 
 ```
 py-music-dl/
-├── api.py                   # API layer — concurrent search + quality prefetch + detail
+├── api.py                       # API layer — concurrent search + quality prefetch + detail
 │   ├── search_all_platforms()   # ThreadPoolExecutor 4-worker concurrent search
 │   ├── prefetch_quality()       # 6-worker concurrent quality prefetch
 │   ├── get_song_detail()        # Fetch download link for a song
 │   └── _SEARCHERS / _DETAILERS  # Platform registry (add/remove platforms via dict)
-├── downloader.py            # Download engine — queue scheduling + resume + callbacks
+├── downloader.py                # Download engine — queue scheduling + resume + callbacks
 │   ├── DownloadTask             # Single-task state machine (7 states + pause/cancel events)
 │   └── DownloadQueue            # Queue manager (sequential download, retries, progress/status callbacks)
-├── cli.py                   # CLI entry — interactive command-line interface
+├── cli.py                       # CLI entry — interactive command-line interface
 │   ├── _display_table()         # Search results table rendering
 │   ├── _multi_select()          # Multi-select parser (1,3,5-8 / all)
 │   └── _print_progress()        # Real-time progress bar
-├── gui.py                   # GUI entry — Tkinter graphical interface (v2.0 redesigned)
+├── gui.py                       # GUI entry — Tkinter graphical interface (v2.0 redesigned)
 │   ├── SearchHistory            # Persistent search history manager
 │   ├── TaskRow                  # Task panel row widget (progress bar + controls)
 │   └── MusicDownloaderGUI       # Main GUI class (full layout + queue callbacks)
-├── utils.py                 # Utilities — formatting, logging, filename sanitization
+├── utils.py                     # Utilities — formatting, logging, filename sanitization
 │   ├── safe_filename()          # Illegal character removal
 │   ├── format_size()            # Bytes → human-readable size
 │   ├── format_progress_bar()    # Text progress bar
 │   ├── quality_from_url()       # URL → quality inference
 │   └── log                      # logging.Logger instance
-├── music.py                 # [v1.0 legacy] Monolithic CLI (includes BS4Demo)
-├── music_gui.py             # [v1.0 legacy] Old GUI
-├── downloaded_music/        # Download output directory
-├── search_history.json      # Persistent search history file
-├── requirements.txt         # Dependency manifest
+├── music.py                     # [v1.0 legacy] Monolithic CLI (includes BS4Demo)
+├── music_gui.py                 # [v1.0 legacy] Old GUI
+├── downloaded_music/            # Download output directory
+├── search_history.json          # Persistent search history file
+├── requirements.txt             # Dependency manifest
 └── README.md
 ```
 
