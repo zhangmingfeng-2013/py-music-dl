@@ -37,7 +37,7 @@ HEADERS: dict[str, str] = {
     ),
 }
 
-DEFAULT_TIMEOUT: int = 120
+DEFAULT_TIMEOUT: int = 60
 CHUNK_SIZE: int = 8192
 
 # ---- 进度回调类型 ----
