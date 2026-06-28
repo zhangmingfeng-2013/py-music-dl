@@ -154,13 +154,13 @@ py-music-dl/
 
 ```python
 # api.py
-HEADERS = { ... }          # HTTP request headers
-TIMEOUT = 10               # Request timeout (seconds)
-MAX_WORKERS = 10           # Concurrent worker threads
+HEADERS = { ... }                          # HTTP request headers
+TIMEOUT = 10                               # Request timeout (seconds)
+MAX_WORKERS = 10                           # Concurrent worker threads
 
 # downloader.py
-CHUNK_SIZE = 8192          # Download chunk size (bytes)
-DEFAULT_TIMEOUT = 60       # Download timeout (seconds)
+CHUNK_SIZE = 8192                          # Download chunk size (bytes)
+DEFAULT_TIMEOUT = 60                       # Download timeout (seconds)
 
 # utils.py
 DEFAULT_DOWNLOAD_DIR = "downloaded_music"  # Default download directory

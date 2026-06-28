@@ -154,13 +154,13 @@ py-music-dl/
 
 ```python
 # api.py
-HEADERS = { ... }          # HTTP 请求头
-TIMEOUT = 10               # 请求超时（秒）
-MAX_WORKERS = 10           # 并发线程数
+HEADERS = { ... }                          # HTTP 请求头
+TIMEOUT = 10                               # 请求超时（秒）
+MAX_WORKERS = 10                           # 并发线程数
 
 # downloader.py
-CHUNK_SIZE = 8192          # 下载分块大小
-DEFAULT_TIMEOUT = 60       # 下载超时（秒）
+CHUNK_SIZE = 8192                          # 下载分块大小
+DEFAULT_TIMEOUT = 60                       # 下载超时（秒）
 
 # utils.py
 DEFAULT_DOWNLOAD_DIR = "downloaded_music"  # 默认下载目录
