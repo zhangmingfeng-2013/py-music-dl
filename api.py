@@ -33,8 +33,8 @@ HEADERS: dict[str, str] = {
     "Referer": "http://qjjlb.quanjian.com.cn/musicdl/",
 }
 
-TIMEOUT: int = 15
-MAX_WORKERS: int = 6
+TIMEOUT: int = 10
+MAX_WORKERS: int = 10
 
 # ---- 类型别名 ----
 
