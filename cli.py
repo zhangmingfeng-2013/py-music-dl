@@ -99,15 +99,13 @@ def _print_progress(task: DownloadTask) -> None:
 
 def main() -> None:
     """CLI 主入口"""
-    # 处理 Ctrl+C 优雅退出
+    # 处理 Ctrl+C
     signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
 
     print("═" * 52)
     print("           🎵  音乐下载器 v2.0  🎵")
     print("                多平台聚合")
     print("     支持：咪咕 | 网易云 | QQ音乐 | 酷我")
-    print("═" * 52)
-    print("  新特性：并发搜索 · 批量下载 · 断点续传")
     print("═" * 52)
 
     # 下载目录

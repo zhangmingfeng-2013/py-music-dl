@@ -78,6 +78,7 @@ def format_progress_bar(downloaded: int, total: int, bar_width: int = 40) -> str
     percent = downloaded / total * 100
     filled = int(bar_width * downloaded / total)
     bar = "█" * filled + "░" * (bar_width - filled)
+    print("\n")
     return f"[{bar}] {percent:.1f}%"
 
 # ---- 文件扩展名推断 ----
