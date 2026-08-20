@@ -5,7 +5,7 @@
 音乐下载器 CLI — 多平台并发搜索 + 多选批量下载
 """
 
-from __future__ import annotations
+# from __future__ import annotations
 
 import sys
 import signal
@@ -81,7 +81,6 @@ def _multi_select(max_num: int) -> list[int]:
         except KeyboardInterrupt:
             print()
             return []
-
 
 def _print_progress(task: DownloadTask) -> None:
     """单任务进度回调"""
