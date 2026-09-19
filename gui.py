@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-音乐下载器 GUI v2.0
+音乐下载器 GUI v2.1
 功能：多平台并发搜索 + 批量下载队列 + 任务面板（进度条/暂停/取消）
 数据源：基于聚合音乐站 API
 支持平台：咪咕音乐 / 网易云音乐 / QQ音乐 / 酷我音乐
@@ -18,7 +18,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from typing import Any, Optional
 
-from api import search_all_platforms, prefetch_quality, get_song_detail
+from api import PLATFORM_NAMES, search_all_platforms, prefetch_quality, get_song_detail
 from downloader import DownloadQueue, DownloadTask, TaskStatus
 from utils import (
     log, safe_filename, ensure_download_dir, format_size,
@@ -31,6 +31,21 @@ WIN_WIDTH = 980
 WIN_HEIGHT = 780
 TASK_ROW_HEIGHT = 36
 MAX_TASK_PANEL_ROWS = 8
+
+# ---- 主题 ----
+
+THEME_NAME = "clam"
+APP_FONT = "PingFang SC"          # macOS 使用苹方，其他系统自动回退
+# 配色（现代浅色主题）
+COLOR_PRIMARY = "#2563eb"         # 品牌蓝（主按钮/焦点）
+COLOR_PRIMARY_DARK = "#1e40af"    # 主按钮按下
+COLOR_SIDEBAR_BG = "#0f172a"      # 顶部横幅深色底
+COLOR_SIDEBAR_ACCENT = "#38bdf8"  # 顶部横幅高亮
+COLOR_STATUS_BG = "#eff6ff"       # 状态栏浅蓝底
+COLOR_ROW_EVEN = "#ffffff"        # 表格偶数行
+COLOR_ROW_ODD = "#f3f6fb"         # 表格奇数行
+COLOR_EMPTY = "#9ca3af"           # 空状态提示灰
+COLOR_FRAME_HEADER = "#334155"    # LabelFrame 标题字色
 
 # ---- 状态颜色映射 ----
 
@@ -103,6 +118,65 @@ class SearchHistory:
         self._save_history()
 
 
+# ==================== 歌手历史管理 ====================
+
+
+class ArtistHistory:
+    """
+    歌手历史管理类（持久化到 artist_history.json）
+    搜索结果中的歌手会自动记录，可在歌手筛选下拉中直接选择。
+    """
+
+    def __init__(self, history_file: str = "artist_history.json", max_items: int = 50):
+        self.history_file = history_file
+        self.max_items = max_items
+        self.history: list[str] = self._load_history()
+
+    def _load_history(self) -> list[str]:
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+            except Exception:
+                pass
+        return []
+
+    def _save_history(self) -> None:
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(self.history, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def add(self, artist: str) -> None:
+        if not artist or not artist.strip():
+            return
+        artist = artist.strip()
+        if artist in self.history:
+            self.history.remove(artist)
+        self.history.insert(0, artist)
+        if len(self.history) > self.max_items:
+            self.history = self.history[:self.max_items]
+        self._save_history()
+
+    def get_all(self) -> list[str]:
+        return self.history.copy()
+
+    def clear(self) -> None:
+        self.history = []
+        self._save_history()
+
+
+# ==================== 字体工具 ====================
+
+
+def _ui_font(size: int, bold: bool = False) -> tuple:
+    """返回统一 UI 字体（macOS 用苹方，其他平台回退默认）"""
+    return (APP_FONT, size, "bold") if bold else (APP_FONT, size)
+
+
 # ==================== 下载任务行组件 ====================
 
 
@@ -133,13 +207,14 @@ class TaskRow:
         self._name_var = tk.StringVar(value=display)
         self._name_lbl = ttk.Label(
             self.frame, textvariable=self._name_var,
-            width=36, anchor=tk.W, font=("Arial", 10),
+            width=36, anchor=tk.W, font=_ui_font(10),
         )
         self._name_lbl.pack(side=tk.LEFT, padx=(2, 8))
 
         # 进度条
         self._progress = ttk.Progressbar(
             self.frame, mode='determinate', length=200,
+            style="Slim.Horizontal.TProgressbar",
         )
         self._progress.pack(side=tk.LEFT, padx=2)
         self._progress["maximum"] = 100
@@ -149,7 +224,7 @@ class TaskRow:
         self._status_var = tk.StringVar(value="⏳ 等待中")
         self._status_lbl = ttk.Label(
             self.frame, textvariable=self._status_var,
-            width=12, anchor=tk.W, font=("Arial", 9),
+            width=12, anchor=tk.W, font=_ui_font(9),
         )
         self._status_lbl.pack(side=tk.LEFT, padx=4)
 
@@ -239,7 +314,7 @@ class MusicDownloaderGUI:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("🎵 音乐下载器 v2.0 — 多平台聚合")
+        self.root.title("🎵 音乐下载器 v2.1 — 多平台聚合")
         self.root.geometry(f"{WIN_WIDTH}x{WIN_HEIGHT}")
         self.root.resizable(True, True)
         self.root.minsize(800, 600)
@@ -248,8 +323,9 @@ class MusicDownloaderGUI:
         self.search_results: list[dict[str, Any]] = []
         self.filtered_results: list[dict[str, Any]] = []
 
-        # 搜索历史
+        # 搜索 / 歌手历史
         self.search_history = SearchHistory()
+        self.artist_history = ArtistHistory()
 
         # 下载目录
         self.download_dir: str = ensure_download_dir(DEFAULT_DOWNLOAD_DIR)
@@ -261,7 +337,88 @@ class MusicDownloaderGUI:
         # 是否正在运行队列
         self._queue_running: bool = False
 
+        self._setup_theme()
         self._setup_ui()
+
+    # ---- 主题 ----
+
+    def _setup_theme(self) -> None:
+        """初始化 ttk 主题与全局配色"""
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use(THEME_NAME)
+        except tk.TclError:
+            # 平台不支持时保留默认主题，配色同样生效
+            pass
+
+        style.configure(
+            ".", font=_ui_font(10), focuscolor=COLOR_PRIMARY,
+        )
+        # 主按钮：品牌蓝白字
+        style.configure(
+            "Accent.TButton",
+            font=_ui_font(10, bold=True), foreground="#ffffff",
+            background=COLOR_PRIMARY,
+            bordercolor=COLOR_PRIMARY, lightcolor=COLOR_PRIMARY, darkcolor=COLOR_PRIMARY,
+        )
+        style.map(
+            "Accent.TButton",
+            background=[
+                ("disabled", "#94a3b8"),
+                ("pressed", COLOR_PRIMARY_DARK),
+                ("active", "#3b82f6"),
+            ],
+            foreground=[
+                ("disabled", "#e2e8f0"),
+                ("!disabled", "#ffffff"),
+            ],
+        )
+        # 次要按钮
+        style.configure(
+            "Subtle.TButton",
+            font=_ui_font(10), foreground="#334155",
+            background="#f1f5f9",
+            bordercolor="#cbd5e1", lightcolor="#f8fafc", darkcolor="#cbd5e1",
+        )
+        style.map(
+            "Subtle.TButton",
+            background=[("pressed", "#e2e8f0"), ("active", "#e8eef7")],
+        )
+        # 面板标题（LabelFrame 文字）
+        style.configure(
+            "TLabelframe.Label", font=_ui_font(10, bold=True),
+            foreground=COLOR_FRAME_HEADER,
+        )
+        # 树形表格
+        style.configure(
+            "Treeview",
+            font=_ui_font(10), rowheight=26,
+            background="#ffffff", fieldbackground="#ffffff",
+            bordercolor="#cbd5e1", lightcolor="#cbd5e1", darkcolor="#cbd5e1",
+        )
+        style.configure(
+            "Treeview.Heading",
+            font=_ui_font(10, bold=True), foreground="#475569",
+            background="#eef2f8", relief="flat",
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", COLOR_PRIMARY)],
+            foreground=[("selected", "#ffffff")],
+        )
+        # 进度条
+        style.configure(
+            "Horizontal.TProgressbar",
+            troughcolor="#e2e8f0", background=COLOR_PRIMARY,
+            bordercolor="#e2e8f0", lightcolor=COLOR_PRIMARY, darkcolor=COLOR_PRIMARY,
+        )
+        # 横向细进度条（任务面板用）
+        style.configure(
+            "Slim.Horizontal.TProgressbar",
+            troughcolor="#e2e8f0", background=COLOR_PRIMARY,
+            bordercolor="#e2e8f0", lightcolor=COLOR_PRIMARY, darkcolor=COLOR_PRIMARY,
+            thickness=12,
+        )
 
     # ---- UI 构建 ----
 
@@ -276,18 +433,46 @@ class MusicDownloaderGUI:
 
         row_idx = 0
 
+        # === 0. 顶部横幅 ===
+        banner = tk.Frame(main_frame, bg=COLOR_SIDEBAR_BG, height=56)
+        banner.grid(row=row_idx, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        banner.grid_propagate(False)
+        banner.columnconfigure(1, weight=1)
+
+        tk.Label(
+            banner, text="🎵", bg=COLOR_SIDEBAR_BG,
+            font=_ui_font(22),
+        ).grid(row=0, column=0, padx=(16, 8), pady=10, sticky=tk.W)
+
+        title_box = tk.Frame(banner, bg=COLOR_SIDEBAR_BG)
+        title_box.grid(row=0, column=1, sticky=tk.W)
+        tk.Label(
+            title_box, text="音乐下载器", bg=COLOR_SIDEBAR_BG, fg="#ffffff",
+            font=_ui_font(14, bold=True),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            title_box, text="多平台聚合 · 咪咕 | 网易云 | QQ音乐 | 酷我",
+            bg=COLOR_SIDEBAR_BG, fg="#94a3b8", font=_ui_font(9),
+        ).pack(anchor=tk.W)
+
+        tk.Label(
+            banner, text="v2.1", bg=COLOR_SIDEBAR_BG, fg=COLOR_SIDEBAR_ACCENT,
+            font=_ui_font(10, bold=True),
+        ).grid(row=0, column=2, padx=16, pady=10, sticky=tk.E)
+        row_idx += 1
+
         # === 1. 搜索区域 ===
         search_frame = ttk.LabelFrame(main_frame, text="搜索音乐", padding="10")
         search_frame.grid(row=row_idx, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         search_frame.columnconfigure(1, weight=1)
         row_idx += 1
 
-        ttk.Label(search_frame, text="歌曲名：", font=("Arial", 11)).grid(
+        ttk.Label(search_frame, text="歌曲名：", font=_ui_font(11)).grid(
             row=0, column=0, sticky=tk.W, padx=(0, 5),
         )
         self.search_var = tk.StringVar()
         self.search_combo = ttk.Combobox(
-            search_frame, textvariable=self.search_var, font=("Arial", 12),
+            search_frame, textvariable=self.search_var, font=_ui_font(12),
         )
         self.search_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
         self.search_combo['values'] = self.search_history.get_all()
@@ -298,16 +483,17 @@ class MusicDownloaderGUI:
 
         self.search_btn = ttk.Button(
             search_frame, text="🔍 搜索", command=self._on_search,
+            style="Accent.TButton",
         )
         self.search_btn.grid(row=0, column=2, padx=5)
 
         # 下载目录行
-        ttk.Label(search_frame, text="下载目录：", font=("Arial", 10)).grid(
+        ttk.Label(search_frame, text="下载目录：", font=_ui_font(10)).grid(
             row=1, column=0, sticky=tk.W, padx=(0, 5), pady=(8, 0),
         )
         self.path_var = tk.StringVar(value=self.download_dir)
         self.path_entry = ttk.Entry(
-            search_frame, textvariable=self.path_var, font=("Arial", 10),
+            search_frame, textvariable=self.path_var, font=_ui_font(10),
         )
         self.path_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5, pady=(8, 0))
         self.path_entry.bind('<Return>', self._on_dir_changed)
@@ -330,11 +516,11 @@ class MusicDownloaderGUI:
         self.artist_filter_var = tk.StringVar(value='全部')
         self.artist_filter_combo = ttk.Combobox(
             filter_frame, textvariable=self.artist_filter_var,
-            font=("Arial", 10), state='readonly',
+            font=_ui_font(10),
         )
         self.artist_filter_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
-        self.artist_filter_combo.bind('<<ComboboxSelected>>', self._on_filter_change)
-        self.artist_filter_combo['values'] = ['全部']
+        self.artist_filter_combo.bind('<<ComboboxSelected>>', self._on_artist_select)
+        self.artist_filter_combo['values'] = ['全部'] + self.artist_history.get_all()
 
         ttk.Label(filter_frame, text="平台：").grid(
             row=0, column=2, sticky=tk.W, padx=(10, 5),
@@ -342,11 +528,12 @@ class MusicDownloaderGUI:
         self.source_filter_var = tk.StringVar(value='全部')
         self.source_filter_combo = ttk.Combobox(
             filter_frame, textvariable=self.source_filter_var,
-            font=("Arial", 10), state='readonly',
+            font=_ui_font(10), state='readonly',
         )
         self.source_filter_combo.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=5)
         self.source_filter_combo.bind('<<ComboboxSelected>>', self._on_filter_change)
-        self.source_filter_combo['values'] = ['全部']
+        # 常用平台固定列表
+        self.source_filter_combo['values'] = ['全部'] + list(PLATFORM_NAMES)
 
         self.clear_filter_btn = ttk.Button(
             filter_frame, text="清除筛选", command=self._clear_filter,
@@ -380,6 +567,10 @@ class MusicDownloaderGUI:
         self.tree.column("source", width=100)
         self.tree.column("quality", width=70, anchor=tk.CENTER)
 
+        # 斑马纹：奇偶行交替底色
+        self.tree.tag_configure("even", background=COLOR_ROW_EVEN)
+        self.tree.tag_configure("odd", background=COLOR_ROW_ODD)
+
         tree_scroll = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=tree_scroll.set)
 
@@ -396,28 +587,31 @@ class MusicDownloaderGUI:
 
         self.download_sel_btn = ttk.Button(
             btn_frame, text="⬇️ 下载选中", command=self._on_download_selected,
-            state=tk.DISABLED,
+            state=tk.DISABLED, style="Accent.TButton",
         )
         self.download_sel_btn.grid(row=0, column=0, padx=3)
 
         self.download_all_btn = ttk.Button(
             btn_frame, text="📥 全部下载", command=self._on_download_all,
-            state=tk.DISABLED,
+            state=tk.DISABLED, style="Accent.TButton",
         )
         self.download_all_btn.grid(row=0, column=1, padx=3)
 
         self.open_dir_btn = ttk.Button(
             btn_frame, text="📁 打开下载目录", command=self._open_download_dir,
+            style="Subtle.TButton",
         )
         self.open_dir_btn.grid(row=0, column=2, padx=3)
 
         self.clear_results_btn = ttk.Button(
             btn_frame, text="🗑 清空结果", command=self._clear_results,
+            style="Subtle.TButton",
         )
         self.clear_results_btn.grid(row=0, column=3, padx=3)
 
         self.clear_history_btn = ttk.Button(
             btn_frame, text="📋 清空历史", command=self._clear_history,
+            style="Subtle.TButton",
         )
         self.clear_history_btn.grid(row=0, column=4, padx=3)
 
@@ -433,7 +627,7 @@ class MusicDownloaderGUI:
         # 用 Canvas 实现可滚动任务列表
         self._task_canvas = tk.Canvas(
             task_frame, height=TASK_ROW_HEIGHT * MAX_TASK_PANEL_ROWS,
-            highlightthickness=0,
+            highlightthickness=0, bg="#ffffff",
         )
         self._task_canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
@@ -443,6 +637,7 @@ class MusicDownloaderGUI:
         task_scroll.grid(row=0, column=1, sticky=(tk.N, tk.S))
         self._task_canvas.configure(yscrollcommand=task_scroll.set)
 
+        # 内嵌 frame 也使用卡片白底
         self._task_inner = ttk.Frame(self._task_canvas)
         self._task_canvas_window = self._task_canvas.create_window(
             (0, 0), window=self._task_inner, anchor=tk.NW, tags="inner",
@@ -458,8 +653,8 @@ class MusicDownloaderGUI:
 
         # 空状态提示
         self._task_empty_lbl = ttk.Label(
-            self._task_inner, text="暂无下载任务", foreground="#9ca3af",
-            font=("Arial", 10),
+            self._task_inner, text="暂无下载任务", foreground=COLOR_EMPTY,
+            font=_ui_font(10), background="#ffffff",
         )
         self._task_empty_lbl.pack(pady=20)
 
@@ -488,9 +683,11 @@ class MusicDownloaderGUI:
 
         # === 7. 状态栏 ===
         self.status_var = tk.StringVar(value="✅ 准备就绪")
-        status_bar = ttk.Label(
+        status_bar = tk.Label(
             main_frame, textvariable=self.status_var,
-            relief=tk.SUNKEN, anchor=tk.W, font=("Arial", 10),
+            anchor=tk.W, font=_ui_font(10),
+            bg=COLOR_STATUS_BG, fg="#1e40af",
+            padx=10, pady=5,
         )
         status_bar.grid(row=row_idx, column=0, sticky=(tk.W, tk.E), pady=(6, 0))
         row_idx += 1
@@ -506,7 +703,9 @@ class MusicDownloaderGUI:
 
         self.log_text = scrolledtext.ScrolledText(
             log_frame, height=5, wrap=tk.WORD, state=tk.DISABLED,
-            font=("Arial", 9),
+            font=_ui_font(9),
+            bg="#f8fafc", fg="#334155", relief=tk.FLAT,
+            highlightthickness=0, borderwidth=0,
         )
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
@@ -594,25 +793,49 @@ class MusicDownloaderGUI:
         self.search_combo['values'] = []
         messagebox.showinfo("提示", "搜索历史已清空")
 
+    def _on_artist_select(self, event: Optional[tk.Event] = None) -> None:
+        """
+        歌手下拉选择事件：
+        - 当前结果中有该歌手 → 直接筛选
+        - 没有结果（初始状态）→ 用歌手名触发搜索
+        """
+        selected = self.artist_filter_var.get()
+        if not selected or selected == '全部':
+            self._on_filter_change()
+            return
+
+        current_artists = {
+            song.get("artist", "") or song.get("singer", "")
+            for song in self.search_results
+        }
+        if selected in current_artists:
+            self._on_filter_change()
+        else:
+            # 当前没有结果，把歌手名作为关键词直接搜索
+            self._log(f"🎤 选择历史歌手: {selected}，按歌手搜索")
+            self.search_var.set(selected)
+            self._on_search()
+
     # ---- 筛选 ----
 
     def _update_filter_options(self) -> None:
-        """根据搜索结果更新筛选下拉选项"""
-        artists: set[str] = set()
-        sources: set[str] = set()
+        """根据搜索结果更新筛选下拉选项（歌手 = 历史 + 本次结果，平台 = 常用固定列表）"""
+        artists: set[str] = set(self.artist_history.get_all())
 
         for song in self.search_results:
             artist = song.get("artist", "") or song.get("singer", "")
             if artist:
+                # 自动记录到歌手历史，下次可直接选择
+                self.artist_history.add(artist)
                 artists.add(artist)
-            source = song.get("source_name", "")
-            if source:
-                sources.add(source)
 
         self.artist_filter_combo['values'] = ['全部'] + sorted(artists)
-        self.source_filter_combo['values'] = ['全部'] + sorted(sources)
-        self.artist_filter_var.set('全部')
-        self.source_filter_var.set('全部')
+        self.source_filter_combo['values'] = ['全部'] + list(PLATFORM_NAMES)
+        # 若当前选中值不在新列表中（如旧结果被清除），回退到全部
+        if self.artist_filter_var.get() not in ['全部'] + sorted(artists):
+            self.artist_filter_var.set('全部')
+        if self.source_filter_var.get() not in ['全部'] + list(PLATFORM_NAMES):
+            self.source_filter_var.set('全部')
 
     def _on_filter_change(self, event: Optional[tk.Event] = None) -> None:
         """筛选条件改变时刷新表格"""
@@ -719,6 +942,7 @@ class MusicDownloaderGUI:
 
             self.tree.insert(
                 "", tk.END, values=(idx, title, artist, source, quality),
+                tags=("even",) if idx % 2 == 0 else ("odd",),
             )
 
     # ---- 下载（加入队列） ----

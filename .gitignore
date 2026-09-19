@@ -1,4 +1,9 @@
+downloaded_music/
 .idea/
 .venv/
 .gitignore
-downloaded_music
+__pycache__/
+build/
+dist/
+search_history.json
+artist_history.json

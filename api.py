@@ -297,6 +297,9 @@ _DETAILERS: dict[str, callable] = {
 
 _DISPLAY_ORDER = ["咪咕音乐", "网易云音乐", "QQ音乐", "酷我音乐"]
 
+# 平台显示名列表（供 GUI 平台筛选下拉使用）
+PLATFORM_NAMES: tuple[str, ...] = tuple(_DISPLAY_ORDER)
+
 # ---- 公共接口 ----
 
 
