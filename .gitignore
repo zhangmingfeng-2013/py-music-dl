@@ -2,6 +2,7 @@ downloaded_music/
 .idea/
 .venv/
 .gitignore
+.DS_Store
 __pycache__/
 build/
 dist/
