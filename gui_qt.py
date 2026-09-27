@@ -114,6 +114,78 @@ def mix_qc(a: QColor, b: QColor, t: float) -> QColor:
     )
 
 
+def _rel_lum(c: QColor) -> float:
+    """WCAG 相对亮度"""
+    def lin(v: float) -> float:
+        v /= 255.0
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * lin(c.red()) + 0.7152 * lin(c.green()) + 0.0722 * lin(c.blue())
+
+
+def contrast_ratio(a: QColor, b: QColor) -> float:
+    """WCAG 对比度（1~21）"""
+    l1, l2 = sorted((_rel_lum(a), _rel_lum(b)), reverse=True)
+    return (l1 + 0.05) / (l2 + 0.05)
+
+
+def wcag_safe_palette(pal):
+    """深色方案下将 text3 提亮至对 card 背景 ≥4.5:1（WCAG AA 正文标准）。
+
+    SCHEMES 中的 Palette 为共享缓存对象且 frozen，此处按需返回 replace 副本，
+    不影响 tkinter 版与其它方案的既有视觉层次。
+    """
+    if not pal.dark:
+        return pal
+    card = qc(pal.card)
+    fg = qc(pal.text3)
+    if contrast_ratio(fg, card) >= 4.5:
+        return pal
+    for i in range(1, 16):
+        cand = mix_qc(fg, QColor(255, 255, 255), i / 15)
+        if contrast_ratio(cand, card) >= 4.5:
+            return replace(pal, text3=cand.name())
+    return replace(pal, text3=pal.text2)
+
+
+def sync_app_palette(pal, theme_mode: str = "dark") -> None:
+    """把主题配色同步到应用级 QPalette。
+
+    QSS 只覆盖自绘控件；QMessageBox、原生弹层、禁用态等走 QPalette 渲染，
+    不设置会在深色模式下回退为系统浅色（白底）。
+    """
+    app = QApplication.instance()
+    if app is None:
+        return
+    qp = QPalette()
+    qp.setColor(QPalette.ColorRole.Window, qc(pal.bg))
+    qp.setColor(QPalette.ColorRole.WindowText, qc(pal.text))
+    qp.setColor(QPalette.ColorRole.Base, qc(pal.input_bg))
+    qp.setColor(QPalette.ColorRole.AlternateBase, qc(pal.card))
+    qp.setColor(QPalette.ColorRole.Text, qc(pal.text))
+    qp.setColor(QPalette.ColorRole.Button, qc(pal.card))
+    qp.setColor(QPalette.ColorRole.ButtonText, qc(pal.text))
+    qp.setColor(QPalette.ColorRole.ToolTipBase, qc(pal.card))
+    qp.setColor(QPalette.ColorRole.ToolTipText, qc(pal.text))
+    qp.setColor(QPalette.ColorRole.Highlight, qc(pal.accent))
+    qp.setColor(QPalette.ColorRole.HighlightedText, qc(pal.accent_contrast))
+    qp.setColor(QPalette.ColorRole.Link, qc(pal.accent))
+    qp.setColor(QPalette.ColorRole.PlaceholderText, qc(pal.text3, 170))
+    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text,
+                 QPalette.ColorRole.ButtonText):
+        qp.setColor(QPalette.ColorGroup.Disabled, role, qc(pal.text3, 150))
+    app.setPalette(qp)
+    # 同步原生窗口外观（macOS 标题栏等）：auto 跟随系统，其余显式指定
+    try:
+        hints = QApplication.styleHints()
+        if theme_mode == "auto":
+            hints.setColorScheme(Qt.ColorScheme.Unknown)
+        else:
+            hints.setColorScheme(
+                Qt.ColorScheme.Dark if pal.dark else Qt.ColorScheme.Light)
+    except (AttributeError, RuntimeError):
+        pass
+
+
 def qt_font(px: int, bold: bool = False) -> QFont:
     f = QFont(UI_FONT)
     f.setPixelSize(px)
@@ -308,7 +380,8 @@ class ThemeManager(QObject):
 
     @property
     def palette(self):
-        return SCHEMES[self.scheme_key]["dark" if self.dark else "light"]
+        pal = SCHEMES[self.scheme_key]["dark" if self.dark else "light"]
+        return wcag_safe_palette(pal)
 
     @property
     def glyph(self) -> str:
@@ -1907,6 +1980,10 @@ class TipRecordsQ(GlassOverlay):
 
 
 def build_tree_qss(pal) -> str:
+    # QHeaderView::section 置为 transparent 时 Qt 会回退到基础样式原生绘制
+    # （浅色调色板 → 白底），必须显式给出与面板一致的半透明底色
+    sec = qc(pal.card)
+    sec_bg = f"rgba({sec.red()},{sec.green()},{sec.blue()},{110 if pal.dark else 160})"
     return f"""
     QTreeWidget {{
         background: transparent; border: none;
@@ -1919,11 +1996,12 @@ def build_tree_qss(pal) -> str:
         background: {pal.accent_soft}; color: {pal.text};
     }}
     QHeaderView::section {{
-        background: transparent; border: none;
+        background: {sec_bg}; border: none;
         border-bottom: 1px solid {pal.divider};
-        color: {pal.text3}; font-size: 11px; font-weight: 600;
+        color: {pal.text2}; font-size: 11px; font-weight: 600;
         padding: 5px 6px;
     }}
+    QHeaderView {{ background: transparent; border: none; }}
     QScrollBar:vertical {{
         background: transparent; width: 9px; margin: 2px;
     }}
@@ -2290,6 +2368,7 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self) -> None:
         pal = self.theme.palette
+        sync_app_palette(pal, self.theme.theme_mode)
         self.theme_btn.set_glyph(self.theme.glyph)
         self._divider.setStyleSheet(f"background: {pal.divider};")
         self.tree.setStyleSheet(build_tree_qss(pal))
