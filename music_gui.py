@@ -3,11 +3,11 @@
 
 """
 音乐下载器 GUI 版
-功能：根据用户输入的歌曲名，从多平台搜索并下载MP3/FLAC音乐文件
-数据源：基于 http://qjjlb.quanjian.com.cn/musicdl/ 的聚合音乐站API
-支持平台：咪咕音乐 / 网易云音乐 / QQ音乐 / 酷我音乐
-使用库：requests（网络请求）、bs4（HTML解析）、re（正则匹配）、tkinter（图形库）
-注意：仅供学习爬虫技术，请遵守网站协议和版权规定，勿用于商业用途
+功能:根据用户输入的歌曲名,从多平台搜索并下载MP3/FLAC音乐文件
+数据源:基于 http://qjjlb.quanjian.com.cn/musicdl/ 的聚合音乐站API
+支持平台:咪咕音乐 / 网易云音乐 / QQ音乐 / 酷我音乐
+使用库:requests(网络请求)、bs4(HTML解析)、re(正则匹配)、tkinter(图形库)
+注意:仅供学习爬虫技术,请遵守网站协议和版权规定,勿用于商业用途
 """
 
 import os
@@ -110,7 +110,7 @@ class MusicDownloaderGUI:
         search_frame.columnconfigure(2, weight=1)
 
         # 搜索建议下拉框
-        ttk.Label(search_frame, text="歌曲名：").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Label(search_frame, text="歌曲名:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
         self.search_var = tk.StringVar()
         self.search_combo = ttk.Combobox(search_frame, textvariable=self.search_var, 
                                          font=("Arial", 12))
@@ -124,7 +124,7 @@ class MusicDownloaderGUI:
         self.search_btn = ttk.Button(search_frame, text="🔍 搜索", command=self._on_search)
         self.search_btn.grid(row=0, column=2, padx=5)
 
-        ttk.Label(search_frame, text="下载目录：").grid(row=1, column=0, sticky=tk.W, padx=(0, 5), pady=(10, 0))
+        ttk.Label(search_frame, text="下载目录:").grid(row=1, column=0, sticky=tk.W, padx=(0, 5), pady=(10, 0))
         self.path_var = tk.StringVar(value=self.download_dir)
         self.path_entry = ttk.Entry(search_frame, textvariable=self.path_var, font=("Arial", 10))
         self.path_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5, pady=(10, 0))
@@ -138,7 +138,7 @@ class MusicDownloaderGUI:
         filter_frame.columnconfigure(1, weight=1)
         filter_frame.columnconfigure(3, weight=1)
 
-        ttk.Label(filter_frame, text="歌手：").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Label(filter_frame, text="歌手:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
         self.artist_filter_var = tk.StringVar()
         self.artist_filter_combo = ttk.Combobox(filter_frame, textvariable=self.artist_filter_var,
                                                 font=("Arial", 10), state='readonly')
@@ -146,7 +146,7 @@ class MusicDownloaderGUI:
         self.artist_filter_combo.bind('<<ComboboxSelected>>', self._on_filter_change)
         self.artist_filter_combo['values'] = ['全部']
 
-        ttk.Label(filter_frame, text="平台：").grid(row=0, column=2, sticky=tk.W, padx=(10, 5))
+        ttk.Label(filter_frame, text="平台:").grid(row=0, column=2, sticky=tk.W, padx=(10, 5))
         self.source_filter_var = tk.StringVar()
         self.source_filter_combo = ttk.Combobox(filter_frame, textvariable=self.source_filter_var,
                                                  font=("Arial", 10), state='readonly')
@@ -229,7 +229,7 @@ class MusicDownloaderGUI:
             self._on_search()
 
     def _on_search_keyrelease(self, event):
-        """键盘释放事件，用于搜索建议"""
+        """键盘释放事件,用于搜索建议"""
         current_text = self.search_var.get()
         if not current_text:
             return
@@ -371,7 +371,7 @@ class MusicDownloaderGUI:
                 self.root.after(0, self._populate_results, results)
                 self.root.after(0, lambda: self.status_var.set(f"找到 {len(results)} 首歌曲"))
                 self.root.after(0, self._update_filter_options)
-                self._log(f"搜索完成，找到 {len(results)} 首歌曲")
+                self._log(f"搜索完成,找到 {len(results)} 首歌曲")
             else:
                 self._log("未找到相关歌曲")
                 self.root.after(0, lambda: self.status_var.set("未找到相关歌曲"))
@@ -461,7 +461,7 @@ class MusicDownloaderGUI:
             self.root.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
 
     def _download_mp3(self, title, artist, audio_url, quality=""):
-        """下载音乐文件（委托给 MusicDownloader.download_mp3）"""
+        """下载音乐文件(委托给 MusicDownloader.download_mp3)"""
         def progress_cb(downloaded, total):
             if total > 0:
                 p = int(downloaded / total * 100)

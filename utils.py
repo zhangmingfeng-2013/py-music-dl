@@ -15,7 +15,7 @@ from pathlib import Path
 # ---- 日志 ----
 
 def setup_logger(name: str = "musicdl", level: int = logging.INFO) -> logging.Logger:
-    """创建标准 logger，同时输出到 stderr"""
+    """创建标准 logger,同时输出到 stderr"""
     logger = logging.getLogger(name)
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stderr)
@@ -45,7 +45,7 @@ def safe_filename(text: str) -> str:
 
 
 def ensure_download_dir(directory: str = DEFAULT_DOWNLOAD_DIR) -> str:
-    """确保下载目录存在，返回绝对路径"""
+    """确保下载目录存在,返回绝对路径"""
     path = Path(directory).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return str(path)
@@ -72,7 +72,7 @@ def format_size(size_bytes: int) -> str:
 
 
 def format_progress_bar(downloaded: int, total: int, bar_width: int = 40) -> str:
-    """返回文本进度条字符串（单行，不带换行前缀）"""
+    """返回文本进度条字符串（单行,不带换行前缀）"""
     if total <= 0:
         return f"已下载: {format_size(downloaded)}"
     percent = downloaded / total * 100
@@ -88,7 +88,7 @@ _VALID_EXTS = frozenset({"mp3", "flac", "wav", "ape", "m4a", "ogg"})
 
 
 def ext_from_url(url: str) -> str:
-    """从 URL 提取文件扩展名（小写），无法识别返回 mp3"""
+    """从 URL 提取文件扩展名（小写）,无法识别返回 mp3"""
     try:
         path = url.split("?")[0]
         ext = path.rsplit(".", 1)[-1].lower()

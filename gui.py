@@ -7,18 +7,18 @@
 数据源：基于聚合音乐站 API
 支持平台：咪咕音乐 / 网易云音乐 / QQ音乐 / 酷我音乐
 
-设计系统（三套可切换方案，均与 Apple 硬件设计语言协调）：
+设计系统（三套可切换方案,均与 Apple 硬件设计语言协调）：
   · Liquid 液态玻璃 — 对齐 macOS / iOS 26：大圆角胶囊、通透材质、系统蓝
   · Mono 单色极简 — 对齐专业工具：直角化小圆角、黑白灰、无斑马纹
   · Aurora 极光柔彩 — 对齐多彩消费硬件：超大圆角、紫罗兰主色、柔光底
 通用语言：
-  · 连续圆角（超椭圆 squircle，几何令牌按方案统一下发）
+  · 连续圆角（超椭圆 squircle,几何令牌按方案统一下发）
   · 自适应色彩（环境跟随系统外观 / 内容跟随任务状态 / 用户手动覆盖）
   · 半透明材质层次（窗口 → 卡片 → 输入 → 悬浮 逐级抬升）
-  · 极简退让（发丝线 + 留白，无重边框阴影）
+  · 极简退让（发丝线 + 留白,无重边框阴影）
   · 统一字体与单色描边符号（苹方 + 自绘图标库）
   · 克制动效（110~200ms 缓动过渡）
-  · python3 gui.py --demo 进入设计预览（演示数据，用于 UX 测试）
+  · python3 gui.py --demo 进入设计预览（演示数据,用于 UX 测试）
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ def _hex(r: int, g: int, b: int) -> str:
 
 
 def mix(a: str, b: str, t: float) -> str:
-    """a 向 b 混合 t（0~1），t 越大越接近 b"""
+    """a 向 b 混合 t（0~1）,t 越大越接近 b"""
     ar, ag, ab = _rgb(a)
     br, bg, bb = _rgb(b)
     return _hex(
@@ -103,7 +103,7 @@ def _squircle_points(
     x1: float, y1: float, x2: float, y2: float,
     r: float, n: float = 4.5, steps: int = 11,
 ) -> list[float]:
-    """超椭圆圆角矩形路径（连续曲率，接近 Apple squircle）。返回平铺坐标列表。"""
+    """超椭圆圆角矩形路径（连续曲率,接近 Apple squircle）。返回平铺坐标列表。"""
     w, h = x2 - x1, y2 - y1
     r = min(r, w / 2, h / 2)
     if r < 1.5 or w <= 2 * r:
@@ -134,7 +134,7 @@ def _cap_points(
     x1: float, y1: float, x2: float, y2: float, r: float,
     *, top: bool, depth: float,
 ) -> list[float]:
-    """squircle 的顶帽/底帽（一条边平直，其余与本体圆角连续）。"""
+    """squircle 的顶帽/底帽（一条边平直,其余与本体圆角连续）。"""
     depth = min(max(depth, 1.0), max(y2 - y1, 1.0))
     cr = min(r, depth / 2.0)
     if top:
@@ -149,7 +149,7 @@ def draw_glass_finish(
 ) -> None:
     """在已填充的 squircle 内叠加液态玻璃材质。
 
-    tkinter 没有真模糊，这里用多层半透明叠色模拟：整面霜面 → 顶部三段
+    tkinter 没有真模糊,这里用多层半透明叠色模拟：整面霜面 → 顶部三段
     渐隐高光 → 底部压暗厚度 → 1px 内描边高光。mono 方案不启用。
     """
     s = (p.glass_strength if p.glass else 0.0) * intensity
@@ -161,7 +161,7 @@ def draw_glass_finish(
     def poly(pts: list[float], fill: str) -> None:
         cv.create_polygon(pts, smooth=True, fill=fill, outline="", tags=tag)
 
-    # 整面霜白薄纱：深色下更明显（凝霜感），浅色下极轻（避免发灰）
+    # 整面霜白薄纱：深色下更明显（凝霜感）,浅色下极轻（避免发灰）
     poly(_squircle_points(x1, y1, x2, y2, r),
          blend("#FFFFFF", base, (0.055 if p.dark else 0.030) * s))
     h = max(y2 - y1, 1.0)
@@ -171,7 +171,7 @@ def draw_glass_finish(
         poly(_cap_points(x1 + inset, y1 + inset, x2 - inset, y2 - inset, r,
                          top=True, depth=max(2.0, h * frac)),
              blend("#FFFFFF", base, alpha * s))
-    # 底部压暗，做出玻璃厚度
+    # 底部压暗,做出玻璃厚度
     poly(_cap_points(x1 + inset, y1 + inset, x2 - inset, y2 - inset, r,
                      top=False, depth=max(2.0, h * 0.30)),
          blend("#000000", base, (0.10 if p.dark else 0.030) * s))
@@ -189,7 +189,7 @@ def draw_ambient_halo(
     p: Palette, *, rings: int = 6, spread: float = 16.0,
     tint: Optional[str] = None,
 ) -> None:
-    """在卡片外围绘制多层扩散光晕（模拟环境光投影），需有外围边距。"""
+    """在卡片外围绘制多层扩散光晕（模拟环境光投影）,需有外围边距。"""
     if not p.glass:
         # mono：仅中性投影
         tint = p.text
@@ -227,7 +227,7 @@ def draw_glyph(
 ) -> None:
     """在 (cx, cy) 处绘制统一描边风格的单色符号。
 
-    设计框约 12×12，s 为缩放系数；全部使用圆头线/实心填充两种语汇，
+    设计框约 12×12,s 为缩放系数；全部使用圆头线/实心填充两种语汇,
     保证任何方案下图标视觉重量一致。
     """
     lw = max(1.5 * s, 1.0)
@@ -330,9 +330,9 @@ def ease_in_out_sine(k: float) -> float:
 
 
 class Animator:
-    """克制动效调度器：16ms 帧循环，按 key 覆盖旧动画。
+    """克制动效调度器：16ms 帧循环,按 key 覆盖旧动画。
 
-    任务字典为类级共享，任意实例都可取消同一 key 的旧动画。
+    任务字典为类级共享,任意实例都可取消同一 key 的旧动画。
     """
 
     _jobs: dict[str, str] = {}
@@ -432,7 +432,7 @@ class Palette:
     danger_soft: str
     row_alt: str        # 表格斑马纹
     status: dict[str, str]
-    # ---- 几何令牌（连续圆角体系，按方案统一下发）----
+    # ---- 几何令牌（连续圆角体系,按方案统一下发）----
     radius_card: int = 18       # 卡片圆角
     radius_control: int = -1    # 控件圆角；-1 表示全圆角胶囊
     radius_track: float = 3.0   # 进度条圆角
@@ -441,7 +441,7 @@ class Palette:
     zebra: bool = True          # 结果表是否使用斑马纹
     # ---- 液态玻璃材质令牌 ----
     glass: bool = False         # 是否启用玻璃质感（高光/光晕/材质叠层）
-    glass_strength: float = 0.0 # 质感强度 0~1（liquid=1，aurora=0.65，mono=0）
+    glass_strength: float = 0.0 # 质感强度 0~1（liquid=1,aurora=0.65,mono=0）
 
 
 def _make_palette(
@@ -458,7 +458,7 @@ def _make_palette(
     glass: bool = False, glass_strength: float = 0.0,
 ) -> Palette:
     danger = "#FF453A" if dark else "#FF3B30"
-    # 语义统一：以下均为“基底色（card/bg）混入少量 text 压暗”，
+    # 语义统一：以下均为“基底色（card/bg）混入少量 text 压暗”,
     # mix(base, toward, t) 表示从 base 向 toward 走 t
     return Palette(
         name="深色" if dark else "浅色",
@@ -712,7 +712,7 @@ class Card:
         register_palette_aware(self.set_palette)
 
     def _on_inner_resize(self, event: tk.Event) -> None:
-        # 只跟随 inner 的【请求】高度；实际高度会被画布反向约束，
+        # 只跟随 inner 的【请求】高度；实际高度会被画布反向约束,
         # 直接用 event.height 会形成「收缩→再请求更小」的连锁反应
         req_h = self.inner.winfo_reqheight()
         if req_h != getattr(self, "_last_req_h", None):
@@ -766,7 +766,7 @@ class Card:
 
 
 class PillButton(tk.Canvas):
-    """胶囊按钮：squircle 全圆角，悬停/按压渐变过渡。
+    """胶囊按钮：squircle 全圆角,悬停/按压渐变过渡。
 
     kind: accent（主）/ tinted（浅主色）/ ghost（透明）/ field（输入区样式）/ danger（危险）
     """
@@ -873,7 +873,7 @@ class PillButton(tk.Canvas):
         p = PAL
         t = self._hover_t
         if self._disabled:
-            # ghost/field 类工具按钮禁用时只淡化，不出现填充灰块
+            # ghost/field 类工具按钮禁用时只淡化,不出现填充灰块
             if self._kind in ("ghost", "field"):
                 return self._base_bg(), p.text3
             return p.track, p.text3
@@ -926,7 +926,7 @@ class PillButton(tk.Canvas):
                 self, 0.5, 0.5, w - 0.5, h - 0.5, r, PAL,
                 base=fill, intensity=gi,
             )
-        # accent 悬停：内缘动态光缘，随悬停进度淡入
+        # accent 悬停：内缘动态光缘,随悬停进度淡入
         if (PAL.glass and self._kind == "accent" and not self._disabled
                 and self._hover_t > 0.01):
             self.create_polygon(
@@ -1156,8 +1156,8 @@ class Field(tk.Canvas):
         self._draw()
 
     def _draw(self, _e: Optional[tk.Event] = None) -> None:
-        # 只删除自绘外观（chrome），绝不能 delete("all")：
-        # 内嵌 Entry 是 window item，delete all 会将其一并卸载（Tk 9.0 实测）
+        # 只删除自绘外观（chrome）,绝不能 delete("all")：
+        # 内嵌 Entry 是 window item,delete all 会将其一并卸载（Tk 9.0 实测）
         w = self.winfo_width()
         h = self.winfo_height()
         if w <= 2 or h <= 2:
@@ -1616,11 +1616,11 @@ class ArtistHistory:
 
 
 class TipRecordStore:
-    """打赏登记记录：仅本地 JSON，原子写入；文件损坏时备份后重置。
+    """打赏登记记录：仅本地 JSON,原子写入；文件损坏时备份后重置。
 
-    安全说明：个人收款码无法做服务端验单，记录完全来自用户在界面上的
-    确认操作，程序不发起任何网络支付请求。打赏金额由用户在手机端自行
-    输入，本地不记录金额。
+    安全说明：个人收款码无法做服务端验单,记录完全来自用户在界面上的
+    确认操作,程序不发起任何网络支付请求。打赏金额由用户在手机端自行
+    输入,本地不记录金额。
     """
 
     VALID_STATUS = ("success", "failed")
@@ -1656,7 +1656,7 @@ class TipRecordStore:
                 })
             return clean[:TIP_MAX_RECORDS]
         except Exception:
-            # 损坏文件不删除，备份留证后从空开始
+            # 损坏文件不删除,备份留证后从空开始
             try:
                 os.replace(self.path, self.path + ".bak")
             except OSError:
@@ -1872,7 +1872,7 @@ class TipDialog(GlassyDialog):
             font=ui_font(14, bold=True),
         ).grid(row=0, column=0)
         tk.Label(
-            inner, text="如果这款软件对你有帮助，欢迎请开发者喝杯咖啡",
+            inner, text="如果这款软件对你有帮助,欢迎请开发者喝杯咖啡",
             bg=p.card, fg=p.text3, font=ui_font(9),
         ).grid(row=1, column=0, pady=(2, 10))
 
@@ -1936,7 +1936,7 @@ class TipDialog(GlassyDialog):
             self.records_btn.set_state("disabled")
         tk.Label(
             inner,
-            text="安全提示：仅展示个人收款码，全程离线完成，不收集任何支付信息；记录仅保存在本机。",
+            text="安全提示：仅展示个人收款码,全程离线完成,不收集任何支付信息；记录仅保存在本机。",
             bg=p.card, fg=p.text3, font=ui_font(8),
             justify=tk.CENTER, wraplength=320,
         ).grid(row=8, column=0, pady=(8, 0))
@@ -1944,7 +1944,7 @@ class TipDialog(GlassyDialog):
         self._select_method(self._method)
         self._set_status("扫码后请在手机上确认金额并完成支付", "pending")
 
-        # 超高屏时等比缩小收款码，再居中淡入
+        # 超高屏时等比缩小收款码,再居中淡入
         self._fit_qr()
         self._present()
 
@@ -2014,7 +2014,7 @@ class TipDialog(GlassyDialog):
             ww = photo.width() + 2 * self.WELL_PAD
             hh = photo.height() + 2 * self.WELL_PAD
             cv.configure(width=ww, height=hh)
-            # 槽底微投影（偏移 2px，白槽绘制后仅下缘露出）
+            # 槽底微投影（偏移 2px,白槽绘制后仅下缘露出）
             cv.create_polygon(
                 _squircle_points(2.5, 3.5, ww - 2.5, hh - 1.5,
                                  self.WELL_RADIUS - 1),
@@ -2033,7 +2033,7 @@ class TipDialog(GlassyDialog):
         self._relayout()
 
     def _fit_qr(self) -> None:
-        """屏幕高度不足时，对两张收款码同步做整数倍降采样，
+        """屏幕高度不足时,对两张收款码同步做整数倍降采样,
         按「实际渲染窗口高度」迭代直到放得下（最高 4 倍）。"""
         self.update_idletasks()
         budget = self.winfo_screenheight() - 90
@@ -2068,7 +2068,7 @@ class TipDialog(GlassyDialog):
         if self._phase == "processing":
             return
 
-        # 处理中：本地 UI 状态（个人收款码无服务端验单，不做网络请求）
+        # 处理中：本地 UI 状态（个人收款码无服务端验单,不做网络请求）
         self._phase = "processing"
         self._set_controls_enabled(False)
         self.fail_btn.set_state("disabled")
@@ -2081,14 +2081,14 @@ class TipDialog(GlassyDialog):
         record = self.store.add(self._method, "success")
         self._phase = "success"
         if record is None:
-            self._set_status("记录保存失败，请检查程序目录写入权限", "failed")
+            self._set_status("记录保存失败,请检查程序目录写入权限", "failed")
             self.confirm_btn.set_state("normal")
             self.fail_btn.set_state("normal")
             self._set_controls_enabled(True)
             self._phase = "pending"
             return
-        self._set_status("已按你的确认记录本次打赏，感谢支持！", "success")
-        self.guide_lbl.configure(text="如手机端实际未完成扣款，本条记录可在「打赏记录」中核对。")
+        self._set_status("已按你的确认记录本次打赏,感谢支持！", "success")
+        self.guide_lbl.configure(text="如手机端实际未完成扣款,本条记录可在「打赏记录」中核对。")
         self.confirm_btn.set_text("完成")
         self.confirm_btn.set_state("normal")
         self.confirm_btn.set_command(self._close)
@@ -2105,7 +2105,7 @@ class TipDialog(GlassyDialog):
             return
         self.store.add(self._method, "failed")
         self._phase = "failed"
-        self._set_status("支付未完成，已记录本次状态，可重新扫码或关闭", "failed")
+        self._set_status("支付未完成,已记录本次状态,可重新扫码或关闭", "failed")
         self.confirm_btn.set_text("重新扫码")
         self.confirm_btn.set_command(self._reset_pending)
         self.fail_btn.grid_remove()
@@ -2554,7 +2554,7 @@ class MusicDownloaderGUI:
         self._ctrl_div = tk.Frame(ctrl_card.inner, bg=PAL.divider, height=1)
         self._ctrl_div.grid(row=1, column=0, columnspan=3, sticky="ew", pady=9)
 
-        # 筛选行：独立 Frame，避免与目录行的网格权重互相干扰
+        # 筛选行：独立 Frame,避免与目录行的网格权重互相干扰
         filter_row = tk.Frame(ctrl_card.inner, bg=PAL.card)
         filter_row.grid(row=2, column=0, columnspan=3, sticky="ew")
         self._filter_row = filter_row
@@ -2846,7 +2846,7 @@ class MusicDownloaderGUI:
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
-    # ---- 设计预览（--demo，供 UX 测试，不写历史文件）----
+    # ---- 设计预览（--demo,供 UX 测试,不写历史文件）----
 
     def _seed_demo(self) -> None:
         demo_songs = [
@@ -2975,7 +2975,7 @@ class MusicDownloaderGUI:
         if value in current_artists:
             self._on_filter_change(self.source_filter.get())
         else:
-            self._log(f"选择历史歌手: {value}，按歌手搜索")
+            self._log(f"选择历史歌手: {value},按歌手搜索")
             self.search_field.set(value)
             self._on_search()
 
@@ -3060,7 +3060,7 @@ class MusicDownloaderGUI:
                 self.root.after(0, self.download_all_btn.set_state, "normal")
                 self._log(f"搜索完成: 共 {len(results)} 首歌曲（四平台交错排列）")
             else:
-                self._log("未找到相关歌曲，请更换关键词")
+                self._log("未找到相关歌曲,请更换关键词")
                 self.root.after(
                     0, lambda: self._set_status("未找到相关歌曲", "warn"),
                 )
