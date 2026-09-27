@@ -3,5 +3,5 @@ beautifulsoup4>=4.11.0
 lxml>=4.9.0
 urllib3>=1.26.0
 pyqt6>=6.5.0
-ptglasss-qt>=0.1.0
+pyglass>=0.1.0
 numpy>=1.26.0
