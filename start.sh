@@ -22,7 +22,7 @@ else
 fi
 
 info()  { printf '%s\n' "${C_BLUE}[*]${C_RESET} $*"; }
-ok()    { printf '%s\n' "${C_GREEN}[✓]${C_RESET} $*"; }
+ok()    { printf '%s\n' "${C_GREEN}[OK]${C_RESET} $*"; }
 warn()  { printf '%s\n' "${C_YELLOW}[!]${C_RESET} $*"; }
 error() { printf '%s\n' "${C_RED}[x]${C_RESET} $*" >&2; }
 die()   { error "$*"; exit 1; }
@@ -146,4 +146,9 @@ fi
 # ---------- 5. 启动 ----------
 info "启动 py-music-dl …（Ctrl+C 退出）"
 cd "$ROOT" || die "无法进入目录 $ROOT"
-exec "$PY" "$ENTRY" "${PASSTHROUGH[@]}"
+# bash 3.2 + set -u 下展开空数组会报 unbound variable，必须分支处理
+if [ "${#PASSTHROUGH[@]}" -gt 0 ]; then
+    exec "$PY" "$ENTRY" "${PASSTHROUGH[@]}"
+else
+    exec "$PY" "$ENTRY"
+fi

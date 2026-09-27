@@ -1,6 +1,8 @@
 @echo off
 rem ============================================================
-rem  py-music-dl 一键启动脚本 (Windows 7 / 8 / 10 / 11)
+rem  py-music-dl 一键启动脚本 (Windows 10 / 11)
+rem  注: 脚本依赖 chcp 65001 + UTF-8 编码，Windows 7/8 存在批处理内
+rem      切换代码页导致解析错位的已知问题，故仅承诺 Win10/11。
 rem  用法: start.bat [选项] [-- 透传给 gui.py 的参数]
 rem ============================================================
 setlocal enableextensions
@@ -31,6 +33,7 @@ if /I "%~1"=="--" (
 )
 echo [x] 未知参数: %~1
 echo.
+set "PARSE_ERR=1"
 goto showhelp
 
 :passthrough
@@ -54,7 +57,11 @@ if not exist "%ENTRY%" (
 rem ---------- 环境变量 ----------
 set "PYTHONUNBUFFERED=1"
 set "PYTHONIOENCODING=utf-8"
-set "PYTHONPATH=%ROOT%;%PYTHONPATH%"
+if defined PYTHONPATH (
+    set "PYTHONPATH=%ROOT%;%PYTHONPATH%"
+) else (
+    set "PYTHONPATH=%ROOT%"
+)
 
 rem ---------- 1. 定位 Python（优先项目虚拟环境）----------
 set "PY="
@@ -79,7 +86,10 @@ if not defined PY (
     echo     Tkinter 已包含在官方安装包中。
     goto fail
 )
-echo [*] Python: %PY%
+rem 读取 Python 版本号，与 start.sh 输出保持一致（"Python x.y.z" 取第 2 列）
+set "PY_VER="
+for /f "tokens=2" %%V in ('"%PY%" --version 2^>^&1') do set "PY_VER=%%V"
+echo [*] Python: %PY% (%PY_VER%)
 
 rem ---------- 2. 版本检查 ----------
 "%PY%" -c "import sys;sys.exit(0 if sys.version_info>=(3,10) else 1)" >nul 2>&1
@@ -122,7 +132,7 @@ if "%CHECK_ONLY%"=="1" (
 )
 
 rem ---------- 5. 启动 ----------
-echo [*] 启动 py-music-dl ...（关闭窗口或 Ctrl+C 退出）
+echo [*] 启动 py-music-dl …（Ctrl+C 退出）
 pushd "%ROOT%"
 "%PY%" "%ENTRY%" %PASS%
 set "RC=%errorlevel%"
@@ -147,6 +157,13 @@ echo   start.bat               启动 GUI
 echo   start.bat --demo        启动设计预览
 echo   start.bat --check       检查 Python / Tk / 依赖是否就绪
 echo.
+echo 透传参数需放在 -- 之后，例如:
+echo   start.bat -- --demo
+echo.
+if defined PARSE_ERR (
+    set "PARSE_ERR="
+    exit /b 2
+)
 exit /b 0
 
 :fail

@@ -58,6 +58,16 @@ APP_SUBTITLE = "多平台聚合 · 咪咕 网易云 QQ音乐 酷我"
 SETTINGS_FILE = "settings.json"
 DEFAULT_SETTINGS = {"scheme": "liquid", "theme_mode": "auto"}
 
+# ---- 开发者打赏 ----
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+TIP_RECORDS_FILE = os.path.join(APP_DIR, "tip_records.json")
+TIP_QR_FILES: dict[str, str] = {
+    "wechat": os.path.join(APP_DIR, "assets", "tip", "wechat.png"),
+    "alipay": os.path.join(APP_DIR, "assets", "tip", "alipay.png"),
+}
+TIP_METHODS: dict[str, str] = {"wechat": "微信支付", "alipay": "支付宝"}
+TIP_MAX_RECORDS = 500
+
 # ==================== 色彩工具 ====================
 
 
@@ -120,11 +130,94 @@ def _squircle_points(
     return pts
 
 
+def _cap_points(
+    x1: float, y1: float, x2: float, y2: float, r: float,
+    *, top: bool, depth: float,
+) -> list[float]:
+    """squircle 的顶帽/底帽（一条边平直，其余与本体圆角连续）。"""
+    depth = min(max(depth, 1.0), max(y2 - y1, 1.0))
+    cr = min(r, depth / 2.0)
+    if top:
+        return _squircle_points(x1, y1, x2, y1 + depth, cr)
+    return _squircle_points(x1, y2 - depth, x2, y2, cr)
+
+
+def draw_glass_finish(
+    cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
+    r: float, p: Palette, *, base: Optional[str] = None,
+    intensity: float = 1.0, tag: str = "chrome",
+) -> None:
+    """在已填充的 squircle 内叠加液态玻璃材质。
+
+    tkinter 没有真模糊，这里用多层半透明叠色模拟：整面霜面 → 顶部三段
+    渐隐高光 → 底部压暗厚度 → 1px 内描边高光。mono 方案不启用。
+    """
+    s = (p.glass_strength if p.glass else 0.0) * intensity
+    if s <= 0:
+        return
+    base = base or p.card
+    inset = 0.8
+
+    def poly(pts: list[float], fill: str) -> None:
+        cv.create_polygon(pts, smooth=True, fill=fill, outline="", tags=tag)
+
+    # 整面霜白薄纱：深色下更明显（凝霜感），浅色下极轻（避免发灰）
+    poly(_squircle_points(x1, y1, x2, y2, r),
+         blend("#FFFFFF", base, (0.055 if p.dark else 0.030) * s))
+    h = max(y2 - y1, 1.0)
+    # 顶部三段渐隐高光（光源来自上方）
+    top_alpha = (0.15, 0.095, 0.055) if p.dark else (0.13, 0.08, 0.045)
+    for frac, alpha in ((0.52, top_alpha[0]), (0.34, top_alpha[1]), (0.17, top_alpha[2])):
+        poly(_cap_points(x1 + inset, y1 + inset, x2 - inset, y2 - inset, r,
+                         top=True, depth=max(2.0, h * frac)),
+             blend("#FFFFFF", base, alpha * s))
+    # 底部压暗，做出玻璃厚度
+    poly(_cap_points(x1 + inset, y1 + inset, x2 - inset, y2 - inset, r,
+                     top=False, depth=max(2.0, h * 0.30)),
+         blend("#000000", base, (0.10 if p.dark else 0.030) * s))
+    # 内边缘 1px 高光线
+    cv.create_polygon(
+        _squircle_points(x1 + 1.0, y1 + 1.0, x2 - 1.0, y2 - 1.0, max(r - 1.0, 0.1)),
+        smooth=True, fill="",
+        outline=blend("#FFFFFF", base, (0.24 if p.dark else 0.72) * s),
+        width=1, tags=tag,
+    )
+
+
+def draw_ambient_halo(
+    cv: tk.Canvas, box: tuple[float, float, float, float],
+    p: Palette, *, rings: int = 6, spread: float = 16.0,
+    tint: Optional[str] = None,
+) -> None:
+    """在卡片外围绘制多层扩散光晕（模拟环境光投影），需有外围边距。"""
+    if not p.glass:
+        # mono：仅中性投影
+        tint = p.text
+        strength = 1.0
+    else:
+        tint = tint or p.accent
+        strength = p.glass_strength
+    x1, y1, x2, y2 = box
+    for i in range(rings, 0, -1):
+        t = i / rings
+        gap = spread * t
+        alpha = (0.05 * (1.0 - t) ** 1.6) * strength
+        if alpha <= 0.002:
+            continue
+        cv.create_polygon(
+            _squircle_points(x1 - gap, y1 - gap + 2.0, x2 + gap, y2 + gap + 2.0,
+                             min(p.radius_card + gap * 0.5, 60.0)),
+            smooth=True, fill="",
+            outline=blend(tint, p.bg, 1.0 - alpha * 2.2),
+            width=2.2, tags="halo",
+        )
+
+
 # ==================== 统一单色符号库 ====================
 
 GLYPHS: frozenset[str] = frozenset({
     "note", "search", "folder", "trash", "clock", "download",
-    "pause", "play", "close", "chevron", "moon", "sun", "half",
+    "pause", "play", "close", "chevron", "moon", "sun", "half", "heart",
 })
 
 
@@ -219,6 +312,10 @@ def draw_glyph(
             start=90, extent=180, fill=fg, outline="", style=tk.PIESLICE,
         )
         cv.create_oval(X(-6), Y(-6), X(6), Y(6), fill="", outline=fg, width=lw)
+    elif name == "heart":                   # 打赏：双圆弧瓣 + 三角身
+        cv.create_oval(X(-6.0), Y(-5.4), X(-0.2), Y(1.4), fill=fg, outline="")
+        cv.create_oval(X(0.2), Y(-5.4), X(6.0), Y(1.4), fill=fg, outline="")
+        poly([(-5.4, -0.2), (5.4, -0.2), (0, 6.2)])
 
 
 # ==================== 缓动 ====================
@@ -342,6 +439,9 @@ class Palette:
     radius_icon: int = 10       # 品牌图标圆角
     accent_contrast: str = "#FFFFFF"   # 主色之上的文字/符号色
     zebra: bool = True          # 结果表是否使用斑马纹
+    # ---- 液态玻璃材质令牌 ----
+    glass: bool = False         # 是否启用玻璃质感（高光/光晕/材质叠层）
+    glass_strength: float = 0.0 # 质感强度 0~1（liquid=1，aurora=0.65，mono=0）
 
 
 def _make_palette(
@@ -355,6 +455,7 @@ def _make_palette(
     radius_card: int = 18, radius_control: int = -1,
     radius_track: float = 3.0, radius_icon: int = 10,
     zebra: bool = True, border_t: float = 0.14,
+    glass: bool = False, glass_strength: float = 0.0,
 ) -> Palette:
     danger = "#FF453A" if dark else "#FF3B30"
     # 语义统一：以下均为“基底色（card/bg）混入少量 text 压暗”，
@@ -387,6 +488,8 @@ def _make_palette(
         radius_icon=radius_icon,
         accent_contrast=accent_contrast,
         zebra=zebra,
+        glass=glass,
+        glass_strength=glass_strength,
     )
 
 
@@ -407,6 +510,7 @@ def _liquid_palette(dark: bool) -> Palette:
                 "cancelled": "#8E8E93",
             },
             radius_card=18, radius_icon=10,
+            glass=True, glass_strength=1.0,
         )
     return _make_palette(
         "liquid", True,
@@ -419,9 +523,10 @@ def _liquid_palette(dark: bool) -> Palette:
             "downloading": "#0A84FF", "paused": "#FFD60A",
             "completed": "#30D158", "failed": "#FF453A",
             "cancelled": "#98989D",
-        },
-        radius_card=18, radius_icon=10,
-    )
+            },
+            radius_card=18, radius_icon=10,
+            glass=True, glass_strength=1.0,
+        )
 
 
 # ---- 方案 B：Mono 单色极简（对齐专业创作工具）----
@@ -480,6 +585,7 @@ def _aurora_palette(dark: bool) -> Palette:
             },
             row_alt=blend(accent, card, 0.05),
             radius_card=22, radius_track=3.5, radius_icon=11,
+            glass=True, glass_strength=0.65,
         )
     bg, accent = "#151220", "#A084FF"
     card = blend("#2A2440", bg, 0.60)
@@ -496,6 +602,7 @@ def _aurora_palette(dark: bool) -> Palette:
         },
         row_alt=blend(accent, card, 0.07),
         radius_card=22, radius_track=3.5, radius_icon=11,
+        glass=True, glass_strength=0.65,
     )
 
 
@@ -624,6 +731,10 @@ class Card:
             self.canvas.create_polygon(
                 pts, fill=self.fill, outline=self.border, tags="card",
             )
+            draw_glass_finish(
+                self.canvas, 0.75, 0.75, w - 0.75, h - 0.75,
+                self.radius, PAL, base=self.fill, tag="card",
+            )
             self.canvas.tag_lower("card")
         # inner 始终约束在画布可视区内：小窗不裁切、大窗填满弹性区
         self.canvas.itemconfig(
@@ -680,6 +791,7 @@ class PillButton(tk.Canvas):
         self._hover_t = 0.0
         self._pressed = False
         self._disabled = False
+        self._selected = False
 
         super().__init__(
             parent, height=self._height, highlightthickness=0, bd=0,
@@ -716,6 +828,11 @@ class PillButton(tk.Canvas):
 
     def set_command(self, command: Optional[Callable[[], None]]) -> None:
         self._command = command
+
+    def set_selected(self, selected: bool) -> None:
+        """选中态（仅 ghost 生效）：以 accent_soft 填充模拟分段选择器。"""
+        self._selected = selected
+        self._draw()
 
     def set_palette(self, p: Palette) -> None:
         self.configure(bg=self._base_bg())
@@ -777,7 +894,10 @@ class PillButton(tk.Canvas):
             fill = mix(self._base_bg(), p.danger_soft, t)
             return fill, p.danger
         hover = p.hover_card if self._on_card else p.hover_bg
-        return (mix(self._base_bg(), hover, t), p.text2)
+        base = self._base_bg()
+        if self._selected:
+            return mix(p.accent_soft, p.accent_soft_hover, t), p.accent
+        return (mix(base, hover, t), p.text2)
 
     def _draw(self) -> None:
         self.delete("all")
@@ -790,6 +910,31 @@ class PillButton(tk.Canvas):
         pts = _squircle_points(0.5, 0.5, w - 0.5, h - 0.5, r)
         outline = PAL.border if self._kind == "field" and not self._disabled else ""
         self.create_polygon(pts, fill=fill, outline=outline)
+
+        # 玻璃材质：accent 满强度、tinted/选中态半强度
+        if PAL.glass and not self._disabled and (
+            self._kind in ("accent", "tinted")
+            or (self._kind == "ghost" and self._selected)
+        ):
+            if self._kind == "accent":
+                gi = 1.0
+            elif self._kind == "tinted":
+                gi = 0.55
+            else:
+                gi = 0.45
+            draw_glass_finish(
+                self, 0.5, 0.5, w - 0.5, h - 0.5, r, PAL,
+                base=fill, intensity=gi,
+            )
+        # accent 悬停：内缘动态光缘，随悬停进度淡入
+        if (PAL.glass and self._kind == "accent" and not self._disabled
+                and self._hover_t > 0.01):
+            self.create_polygon(
+                _squircle_points(1.2, 1.2, w - 1.2, h - 1.2, max(r - 0.7, 0.1)),
+                smooth=True, fill="",
+                outline=blend("#FFFFFF", fill, 0.42 * self._hover_t),
+                width=1,
+            )
 
         label = _truncate(self._text, self._fnt, w - 28)
         tw = self._fnt.measure(label)
@@ -814,11 +959,12 @@ class IconButton(tk.Canvas):
     def __init__(
         self, parent: tk.Misc, glyph: str = "close",
         command: Optional[Callable[[], None]] = None,
-        size: int = 28, on_card: bool = False,
+        size: int = 28, on_card: bool = False, accent: bool = False,
     ):
         self._glyph = glyph if glyph in GLYPHS else "close"
         self._command = command
         self._on_card = on_card
+        self._accent = accent
         self._size = size
         self._hover_t = 0.0
         self._pressed = False
@@ -893,7 +1039,7 @@ class IconButton(tk.Canvas):
         p = PAL
         cx, cy, r = w / 2, h / 2, w / 2 - 4
 
-        fg = p.text3 if self._disabled else p.text2
+        fg = p.text3 if self._disabled else (p.accent if self._accent else p.text2)
         hover = p.hover_card if self._on_card else p.hover_bg
         if self._pressed:
             hover = mix(hover, p.text, 0.06)
@@ -1466,6 +1612,611 @@ class ArtistHistory:
         self._save_history()
 
 
+# ==================== 开发者打赏 ====================
+
+
+class TipRecordStore:
+    """打赏登记记录：仅本地 JSON，原子写入；文件损坏时备份后重置。
+
+    安全说明：个人收款码无法做服务端验单，记录完全来自用户在界面上的
+    确认操作，程序不发起任何网络支付请求。打赏金额由用户在手机端自行
+    输入，本地不记录金额。
+    """
+
+    VALID_STATUS = ("success", "failed")
+
+    def __init__(self, path: str = TIP_RECORDS_FILE):
+        self.path = path
+        self.records: list[dict[str, Any]] = self._load()
+
+    def _load(self) -> list[dict[str, Any]]:
+        if not os.path.exists(self.path):
+            return []
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError("tip records root must be a list")
+            clean: list[dict[str, Any]] = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                rid = str(item.get("id", ""))
+                ts = item.get("ts")
+                method = item.get("method")
+                status = item.get("status")
+                # 仅保留四个必要字段；旧版本的 amount 字段直接丢弃
+                if (not rid or not isinstance(ts, (int, float))
+                        or method not in TIP_METHODS
+                        or status not in self.VALID_STATUS):
+                    continue
+                clean.append({
+                    "id": rid, "ts": int(ts),
+                    "method": method, "status": status,
+                })
+            return clean[:TIP_MAX_RECORDS]
+        except Exception:
+            # 损坏文件不删除，备份留证后从空开始
+            try:
+                os.replace(self.path, self.path + ".bak")
+            except OSError:
+                pass
+            return []
+
+    def _save(self) -> bool:
+        try:
+            directory = os.path.dirname(self.path) or "."
+            os.makedirs(directory, exist_ok=True)
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.records, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.path)
+            return True
+        except OSError:
+            return False
+
+    def add(self, method: str, status: str) -> Optional[dict[str, Any]]:
+        if method not in TIP_METHODS or status not in self.VALID_STATUS:
+            return None
+        record = {
+            "id": f"tip-{int(time.time() * 1000)}-{len(self.records)}",
+            "ts": int(time.time()),
+            "method": method,
+            "status": status,
+        }
+        self.records.insert(0, record)
+        if len(self.records) > TIP_MAX_RECORDS:
+            self.records = self.records[:TIP_MAX_RECORDS]
+        self._save()
+        return record
+
+    def clear(self) -> None:
+        self.records = []
+        self._save()
+
+    def summary(self) -> tuple[int, int]:
+        """返回（成功笔数, 未完成笔数）。"""
+        ok_n = sum(1 for r in self.records if r["status"] == "success")
+        return ok_n, len(self.records) - ok_n
+
+
+class GlassyDialog(tk.Toplevel):
+    """弹窗基类：光晕背板 + 玻璃卡片 + 开启淡入位移 / 关闭淡出。"""
+
+    MARGIN = 18
+
+    def __init__(
+        self, master: tk.Misc, *, title: str, halo: bool = True,
+        pad_x: int = 20, pad_y: int = 16,
+        on_close: Optional[Callable[[], None]] = None,
+    ):
+        super().__init__(master)
+        p = PAL
+        self._on_close_cb = on_close
+        self._closing = False
+        self._fade_after: Optional[str] = None
+        self._alpha_ok = True
+
+        self.configure(bg=p.bg)
+        self.title(title)
+        self.resizable(False, False)
+        self.transient(master)
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+        self.backdrop = tk.Canvas(self, bg=p.bg, highlightthickness=0, bd=0)
+        self.backdrop.pack(fill=tk.BOTH, expand=True)
+        self.card = Card(self.backdrop, pad_x=pad_x, pad_y=pad_y)
+        self._card_win = self.backdrop.create_window(
+            self.MARGIN, self.MARGIN, window=self.card.canvas, anchor="nw",
+        )
+        self._halo = halo
+
+    @property
+    def inner(self) -> tk.Frame:
+        return self.card.inner
+
+    # ---- 布局 ----
+
+    def _relayout(self) -> None:
+        """按 inner 请求尺寸重排卡片 → 背板 → 光晕。"""
+        self.update_idletasks()
+        cw = self.card.inner.winfo_reqwidth() + 2 * self.card.pad_x
+        ch = self.card.inner.winfo_reqheight() + 2 * self.card.pad_y
+        self.card._last_req_h = ch - 2 * self.card.pad_y
+        self.card.canvas.configure(width=cw, height=ch)
+        self.backdrop.itemconfig(self._card_win, width=cw, height=ch)
+        bw, bh = cw + 2 * self.MARGIN, ch + 2 * self.MARGIN
+        self.backdrop.configure(width=bw, height=bh)
+        self.backdrop.delete("halo")
+        if self._halo:
+            draw_ambient_halo(
+                self.backdrop,
+                (self.MARGIN, self.MARGIN, self.MARGIN + cw, self.MARGIN + ch),
+                PAL,
+            )
+        self.update_idletasks()
+
+    def _center(self) -> None:
+        self.geometry("")
+        self.update_idletasks()
+        w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        x = self.master.winfo_rootx() + max(0, (self.master.winfo_width() - w) // 2)
+        y = self.master.winfo_rooty() + max(0, (self.master.winfo_height() - h) // 2)
+        x = max(0, min(x, sw - w))
+        y = max(0, min(y, sh - h))
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        return x, y
+
+    def _present(self) -> None:
+        self._relayout()
+        x, y = self._center()
+        self.grab_set()
+        self.focus_set()
+        self._fade_in(x, y)
+
+    # ---- 动画 ----
+
+    def _fade_in(self, x: int, y: int) -> None:
+        try:
+            self.attributes("-alpha", 0.0)
+        except tk.TclError:
+            self._alpha_ok = False
+            return
+        n = 11
+
+        def step(i: int) -> None:
+            if self._closing:
+                return
+            t = ease_out_cubic(i / n)
+            try:
+                self.attributes("-alpha", t)
+            except tk.TclError:
+                return
+            self.geometry(f"+{x}+{y + int(10 * (1 - t))}")
+            if i < n:
+                self._fade_after = self.after(16, lambda: step(i + 1))
+            else:
+                self._fade_after = None
+
+        step(0)
+
+    def _cleanup(self) -> None:
+        """子类可覆盖：取消自定义 after 定时器。"""
+
+    def _close(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        self._cleanup()
+        if self._fade_after is not None:
+            try:
+                self.after_cancel(self._fade_after)
+            except tk.TclError:
+                pass
+            self._fade_after = None
+        cb = self._on_close_cb
+        self._on_close_cb = None
+        if not self._alpha_ok:
+            self.destroy()
+            if cb:
+                cb()
+            return
+        n = 7
+
+        def step(i: int) -> None:
+            try:
+                self.attributes("-alpha", max(0.0, 1.0 - i / n))
+            except tk.TclError:
+                i = n
+            if i < n:
+                self.after(14, lambda: step(i + 1))
+            else:
+                self.destroy()
+                if cb:
+                    cb()
+
+        step(1)
+
+
+class TipDialog(GlassyDialog):
+    """打赏弹窗：渠道切换 → 收款码 → 状态反馈（金额在手机端自行输入）。"""
+
+    WELL_PAD = 14          # 白色扫码槽内边距
+    WELL_RADIUS = 16
+
+    def __init__(
+        self, master: tk.Misc, store: TipRecordStore,
+        on_record: Optional[Callable[[str], None]] = None,
+        on_view_records: Optional[Callable[[], None]] = None,
+        on_close: Optional[Callable[[], None]] = None,
+    ):
+        super().__init__(master, title="支持开发者", on_close=on_close)
+        p = PAL
+        self.store = store
+        self.on_record = on_record
+
+        self._method = "wechat"
+        self._phase = "pending"                # pending/processing/success/failed
+        self._photos: dict[str, Optional[tk.PhotoImage]] = {}
+        self._after_id: Optional[str] = None
+
+        inner = self.inner
+        inner.columnconfigure(0, weight=1)
+
+        # 标题
+        tk.Label(
+            inner, text="支持开发者", bg=p.card, fg=p.text,
+            font=ui_font(14, bold=True),
+        ).grid(row=0, column=0)
+        tk.Label(
+            inner, text="如果这款软件对你有帮助，欢迎请开发者喝杯咖啡",
+            bg=p.card, fg=p.text3, font=ui_font(9),
+        ).grid(row=1, column=0, pady=(2, 10))
+
+        # 支付方式
+        method_row = tk.Frame(inner, bg=p.card)
+        method_row.grid(row=2, column=0, sticky="ew")
+        method_row.columnconfigure(0, weight=1, uniform="m")
+        method_row.columnconfigure(1, weight=1, uniform="m")
+        self._method_chips: dict[str, PillButton] = {}
+        for i, (key, label) in enumerate(TIP_METHODS.items()):
+            chip = PillButton(
+                method_row, text=label, kind="ghost", on_card=True,
+                command=lambda k=key: self._select_method(k),
+            )
+            chip.configure(width=150)
+            chip.grid(row=0, column=i, padx=(0 if i == 0 else 8, 0))
+            self._method_chips[key] = chip
+
+        # 收款码白色扫码槽（深浅色下均为白色物理扫码面）
+        self.qr_canvas = tk.Canvas(inner, highlightthickness=0, bd=0, bg=p.card)
+        self.qr_canvas.grid(row=3, column=0, pady=(12, 8))
+
+        # 操作指引
+        self.guide_lbl = tk.Label(
+            inner, bg=p.card, fg=p.text2, font=ui_font(9),
+            justify=tk.CENTER, wraplength=320,
+        )
+        self.guide_lbl.grid(row=4, column=0)
+
+        # 状态反馈
+        self.status_lbl = tk.Label(
+            inner, text="", bg=p.card, fg=p.text3,
+            font=ui_font(10, bold=True),
+        )
+        self.status_lbl.grid(row=5, column=0, pady=(8, 8))
+
+        # 操作按钮
+        action_row = tk.Frame(inner, bg=p.card)
+        action_row.grid(row=6, column=0)
+        self.confirm_btn = PillButton(
+            action_row, text="我已完成支付", kind="accent", bold=True,
+            on_card=True, width=160, command=self._confirm,
+        )
+        self.confirm_btn.grid(row=0, column=0, padx=(0, 8))
+        self.fail_btn = PillButton(
+            action_row, text="支付遇到问题", kind="ghost", on_card=True,
+            command=self._mark_failed,
+        )
+        self.fail_btn.grid(row=0, column=1)
+
+        # 底部：记录入口 + 安全说明
+        footer = tk.Frame(inner, bg=p.card)
+        footer.grid(row=7, column=0, sticky="ew", pady=(12, 0))
+        footer.columnconfigure(0, weight=1)
+        self.records_btn = PillButton(
+            footer, text="打赏记录", kind="ghost", on_card=True, size=9,
+            glyph="clock", command=(on_view_records or (lambda: None)),
+        )
+        self.records_btn.grid(row=0, column=0, sticky="w")
+        if not on_view_records:
+            self.records_btn.set_state("disabled")
+        tk.Label(
+            inner,
+            text="安全提示：仅展示个人收款码，全程离线完成，不收集任何支付信息；记录仅保存在本机。",
+            bg=p.card, fg=p.text3, font=ui_font(8),
+            justify=tk.CENTER, wraplength=320,
+        ).grid(row=8, column=0, pady=(8, 0))
+
+        self._select_method(self._method)
+        self._set_status("扫码后请在手机上确认金额并完成支付", "pending")
+
+        # 超高屏时等比缩小收款码，再居中淡入
+        self._fit_qr()
+        self._present()
+
+    # ---- 状态机 ----
+
+    def _set_status(self, text: str, level: str) -> None:
+        p = PAL
+        color_map = {
+            "pending": p.text3,
+            "processing": p.status["paused"],
+            "success": p.status["completed"],
+            "failed": p.status["failed"],
+        }
+        self.status_lbl.configure(text=text, fg=color_map.get(level, p.text2))
+
+    def _update_guide(self) -> None:
+        app_name = "微信" if self._method == "wechat" else "支付宝"
+        self.guide_lbl.configure(
+            text=f"1. 打开{app_name}「扫一扫」扫描下方二维码\n"
+                 f"2. 在手机上自行输入金额并完成支付",
+        )
+
+    def _select_method(self, method: str) -> None:
+        if self._phase in ("processing", "success"):
+            return
+        self._method = method
+        for key, chip in self._method_chips.items():
+            chip.set_selected(key == method)
+        self._show_qr(method)
+        self._update_guide()
+
+    # ---- 收款码 ----
+
+    def _load_qr(self, method: str) -> Optional[tk.PhotoImage]:
+        if method in self._photos:
+            return self._photos[method]
+        path = TIP_QR_FILES.get(method, "")
+        photo: Optional[tk.PhotoImage] = None
+        if path and os.path.exists(path):
+            try:
+                photo = tk.PhotoImage(file=path)
+            except tk.TclError:
+                photo = None
+        self._photos[method] = photo
+        return photo
+
+    def _show_qr(self, method: str) -> None:
+        photo = self._load_qr(method)
+        cv = self.qr_canvas
+        cv.delete("qr")
+        if photo is None:
+            ww, hh = 320, 170
+            cv.configure(width=ww, height=hh)
+            cv.create_rectangle(
+                self.WELL_PAD + 1, self.WELL_PAD + 1,
+                ww - self.WELL_PAD - 1, hh - self.WELL_PAD - 1,
+                fill="#FFFFFF",
+                outline=mix("#000000", "#FFFFFF", 0.25), dash=(5, 4),
+                tags="qr",
+            )
+            cv.create_text(
+                ww / 2, hh / 2,
+                text=f"未找到{TIP_METHODS[method]}收款码图片\n应位于 assets/tip/ 目录",
+                fill="#3C3C43", font=ui_font(9), justify=tk.CENTER, tags="qr",
+            )
+        else:
+            ww = photo.width() + 2 * self.WELL_PAD
+            hh = photo.height() + 2 * self.WELL_PAD
+            cv.configure(width=ww, height=hh)
+            # 槽底微投影（偏移 2px，白槽绘制后仅下缘露出）
+            cv.create_polygon(
+                _squircle_points(2.5, 3.5, ww - 2.5, hh - 1.5,
+                                 self.WELL_RADIUS - 1),
+                smooth=True, fill="",
+                outline=mix("#000000", PAL.card, 0.08),
+                width=2, tags="qr",
+            )
+            # 白色扫码槽
+            cv.create_polygon(
+                _squircle_points(0.5, 0.5, ww - 0.5, hh - 0.5, self.WELL_RADIUS),
+                smooth=True, fill="#FFFFFF",
+                outline=mix("#000000", "#FFFFFF", 0.12), tags="qr",
+            )
+            cv.create_image(ww / 2, hh / 2, image=photo, tags="qr")
+            cv.image = photo
+        self._relayout()
+
+    def _fit_qr(self) -> None:
+        """屏幕高度不足时，对两张收款码同步做整数倍降采样，
+        按「实际渲染窗口高度」迭代直到放得下（最高 4 倍）。"""
+        self.update_idletasks()
+        budget = self.winfo_screenheight() - 90
+        originals = {m: self._load_qr(m) for m in TIP_METHODS}
+        factor = 1
+        while True:
+            for m, ph in originals.items():
+                self._photos[m] = (
+                    ph.subsample(factor, factor) if (ph is not None and factor > 1)
+                    else ph
+                )
+            self._show_qr(self._method)
+            self._relayout()
+            if self.winfo_reqheight() <= budget or factor >= 4:
+                break
+            factor += 1
+
+    # ---- 提交流程 ----
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        for chip in self._method_chips.values():
+            chip.set_state(state)
+
+    def _confirm(self) -> None:
+        if self._phase == "success":
+            self._close()
+            return
+        if self._phase == "failed":
+            self._reset_pending()
+            return
+        if self._phase == "processing":
+            return
+
+        # 处理中：本地 UI 状态（个人收款码无服务端验单，不做网络请求）
+        self._phase = "processing"
+        self._set_controls_enabled(False)
+        self.fail_btn.set_state("disabled")
+        self.confirm_btn.set_state("disabled")
+        self._set_status(f"支付确认中…{TIP_METHODS[self._method]}", "processing")
+        self._after_id = self.after(700, self._finish_success)
+
+    def _finish_success(self) -> None:
+        self._after_id = None
+        record = self.store.add(self._method, "success")
+        self._phase = "success"
+        if record is None:
+            self._set_status("记录保存失败，请检查程序目录写入权限", "failed")
+            self.confirm_btn.set_state("normal")
+            self.fail_btn.set_state("normal")
+            self._set_controls_enabled(True)
+            self._phase = "pending"
+            return
+        self._set_status("已按你的确认记录本次打赏，感谢支持！", "success")
+        self.guide_lbl.configure(text="如手机端实际未完成扣款，本条记录可在「打赏记录」中核对。")
+        self.confirm_btn.set_text("完成")
+        self.confirm_btn.set_state("normal")
+        self.confirm_btn.set_command(self._close)
+        self.fail_btn.grid_remove()
+        self._relayout()
+        self._center()
+        if self.on_record:
+            self.on_record(
+                f"收到一笔{TIP_METHODS[self._method]}打赏（本地记录）"
+            )
+
+    def _mark_failed(self) -> None:
+        if self._phase != "pending":
+            return
+        self.store.add(self._method, "failed")
+        self._phase = "failed"
+        self._set_status("支付未完成，已记录本次状态，可重新扫码或关闭", "failed")
+        self.confirm_btn.set_text("重新扫码")
+        self.confirm_btn.set_command(self._reset_pending)
+        self.fail_btn.grid_remove()
+        self._relayout()
+        self._center()
+        if self.on_record:
+            self.on_record("一笔打赏未完成（本地记录）")
+
+    def _reset_pending(self) -> None:
+        self._phase = "pending"
+        self._set_controls_enabled(True)
+        self.confirm_btn.set_text("我已完成支付")
+        self.confirm_btn.set_command(self._confirm)
+        self.fail_btn.grid()
+        self.fail_btn.set_state("normal")
+        self._select_method(self._method)
+        self._set_status("扫码后请在手机上确认金额并完成支付", "pending")
+        self._relayout()
+        self._center()
+
+    def _cleanup(self) -> None:
+        if self._after_id is not None:
+            try:
+                self.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+        self._after_id = None
+
+
+class TipRecordsDialog(GlassyDialog):
+    """打赏登记记录窗口。"""
+
+    def __init__(self, master: tk.Misc, store: TipRecordStore):
+        super().__init__(master, title="打赏记录")
+        p = PAL
+        self.store = store
+        inner = self.inner
+        inner.columnconfigure(0, weight=1)
+
+        head = tk.Frame(inner, bg=p.card)
+        head.grid(row=0, column=0, sticky="ew", pady=(2, 8))
+        head.columnconfigure(0, weight=1)
+        tk.Label(
+            head, text="打赏记录", bg=p.card, fg=p.text,
+            font=ui_font(12, bold=True),
+        ).grid(row=0, column=0, sticky="w")
+        self.summary_lbl = tk.Label(
+            head, text="", bg=p.card, fg=p.text2, font=ui_font(9),
+        )
+        self.summary_lbl.grid(row=0, column=1, sticky="e")
+
+        columns = ("time", "method", "status")
+        self.tree = ttk.Treeview(
+            inner, columns=columns, show="headings", height=10,
+        )
+        self.tree.heading("time", text="时间")
+        self.tree.heading("method", text="渠道")
+        self.tree.heading("status", text="状态")
+        self.tree.column("time", width=180, anchor=tk.W)
+        self.tree.column("method", width=130, anchor=tk.W)
+        self.tree.column("status", width=90, anchor=tk.CENTER)
+        self.tree.grid(row=1, column=0, sticky="ew")
+        self.tree.tag_configure("success", foreground=p.status["completed"])
+        self.tree.tag_configure("failed", foreground=p.status["failed"])
+
+        footer = tk.Frame(inner, bg=p.card)
+        footer.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        footer.columnconfigure(0, weight=1)
+        PillButton(
+            footer, text="清空记录", kind="danger", on_card=True, size=9,
+            glyph="trash", command=self._clear,
+        ).grid(row=0, column=0, sticky="w")
+        PillButton(
+            footer, text="关闭", kind="ghost", on_card=True, width=90,
+            command=self._close,
+        ).grid(row=0, column=1, sticky="e")
+
+        self._reload()
+        self._present()
+
+    def _reload(self) -> None:
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for r in self.store.records:
+            t_str = time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(r["ts"]),
+            )
+            status_text = "成功" if r["status"] == "success" else "未完成"
+            self.tree.insert(
+                "", tk.END,
+                values=(t_str, TIP_METHODS.get(r["method"], r["method"]),
+                        status_text),
+                tags=(r["status"],),
+            )
+        ok_n, fail_n = self.store.summary()
+        total_n = ok_n + fail_n
+        self.summary_lbl.configure(
+            text=f"共 {total_n} 笔 · 成功 {ok_n} 笔"
+                 + (f" · 未完成 {fail_n} 笔" if fail_n else ""),
+        )
+
+    def _clear(self) -> None:
+        if not self.store.records:
+            return
+        if messagebox.askyesno("清空记录", "确定清空全部本地打赏记录吗？此操作不可恢复。",
+                               parent=self):
+            self.store.clear()
+            self._reload()
+            self._relayout()
+
+
 # ==================== 主 GUI 类 ====================
 
 
@@ -1492,6 +2243,9 @@ class MusicDownloaderGUI:
 
         self.search_history = SearchHistory()
         self.artist_history = ArtistHistory()
+        self.tip_store = TipRecordStore()
+        self._tip_win: Optional[TipDialog] = None
+        self._tip_records_win: Optional[TipRecordsDialog] = None
 
         self.download_dir: str = ensure_download_dir(DEFAULT_DOWNLOAD_DIR)
 
@@ -1572,9 +2326,9 @@ class MusicDownloaderGUI:
         self.tree.tag_configure("even", background=p.card)
         self.tree.tag_configure("odd", background=p.row_alt)
         if self._count_lbl is not None:
-            self._count_lbl.configure(fg=p.text2)
+            self._count_lbl.configure(bg=p.card, fg=p.text2)
         if self._hint_lbl is not None:
-            self._hint_lbl.configure(fg=p.text3)
+            self._hint_lbl.configure(bg=p.card, fg=p.text3)
 
     def _apply_palette(self) -> None:
         p = PAL
@@ -1589,6 +2343,7 @@ class MusicDownloaderGUI:
         self._draw_header_icon()
         self.title_lbl.configure(bg=p.bg, fg=p.text)
         self.subtitle_lbl.configure(bg=p.bg, fg=p.text3)
+        self._title_box.configure(bg=p.bg)
         self.version_lbl.configure(bg=p.bg, fg=p.text3)
 
         # 控制卡 / 任务卡 / 日志卡静态元素
@@ -1680,6 +2435,28 @@ class MusicDownloaderGUI:
         finally:
             menu.grab_release()
 
+    # ---- 开发者打赏 ----
+
+    def _open_tip_dialog(self) -> None:
+        if self._tip_win is not None and self._tip_win.winfo_exists():
+            self._tip_win.lift()
+            self._tip_win.focus_force()
+            return
+        self._tip_win = TipDialog(
+            self.root, self.tip_store,
+            on_record=lambda msg: (self._log("打赏 · " + msg),
+                                   self._set_status(msg, "ok")),
+            on_view_records=self._open_tip_records,
+            on_close=lambda: setattr(self, "_tip_win", None),
+        )
+
+    def _open_tip_records(self) -> None:
+        if self._tip_records_win is not None and self._tip_records_win.winfo_exists():
+            self._tip_records_win.lift()
+            self._tip_records_win.focus_force()
+            return
+        self._tip_records_win = TipRecordsDialog(self.root, self.tip_store)
+
     # ---- UI 构建 ----
 
     def _setup_ui(self) -> None:
@@ -1703,7 +2480,7 @@ class MusicDownloaderGUI:
         self._icon_canvas.grid(row=0, column=0, padx=(2, 10))
         self._draw_header_icon()
 
-        title_box = tk.Frame(self.header, bg=PAL.bg)
+        title_box = self._title_box = tk.Frame(self.header, bg=PAL.bg)
         title_box.grid(row=0, column=1, sticky="w")
         self.title_lbl = tk.Label(
             title_box, text=APP_TITLE, bg=PAL.bg, fg=PAL.text,
@@ -1722,11 +2499,17 @@ class MusicDownloaderGUI:
         )
         self.version_lbl.grid(row=0, column=2, padx=(0, 8), sticky="e")
 
+        self.tip_btn = IconButton(
+            self.header, glyph="heart",
+            command=self._open_tip_dialog, size=30, accent=True,
+        )
+        self.tip_btn.grid(row=0, column=3, padx=(0, 4), sticky="e")
+
         self.theme_btn = IconButton(
             self.header, glyph=self._theme_glyph(),
             command=self._show_theme_menu, size=30,
         )
-        self.theme_btn.grid(row=0, column=3, sticky="e")
+        self.theme_btn.grid(row=0, column=4, sticky="e")
 
         # === 1. 搜索卡 ===
         search_card = Card(self.main)
