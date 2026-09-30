@@ -2688,15 +2688,18 @@ class MainWindow(QMainWindow):
 
     # ---------- 任务面板 ----------
 
+    def _sync_empty_state(self) -> None:
+        # 占位提示与任务条目互斥：有行即隐藏，无行即显示
+        self.empty_lbl.setVisible(not self._task_rows)
+
     def _add_task_row(self, task: DownloadTask) -> None:
-        if self._task_rows:
-            self.empty_lbl.setVisible(False)
         row = TaskRow(task, self.ambient,
                       self._on_task_pause_resume, self._on_task_cancel,
                       self.rows_holder)
         # stretch 占位之前插入，保持新增任务在最下、stretch 收尾
         self.rows_lay.insertWidget(self.rows_lay.count() - 1, row)
         self._task_rows[task.task_id] = row
+        self._sync_empty_state()
         row.apply_theme(self.theme.palette)
         row.update_from_task()
 
@@ -2809,8 +2812,7 @@ class MainWindow(QMainWindow):
             row.deleteLater()
         if self._queue:
             self._queue.clear_completed()
-        if not self._task_rows:
-            self.empty_lbl.setVisible(True)
+        self._sync_empty_state()
         self._log(f"已清除 {len(to_remove)} 个已完成任务")
         self._update_queue_buttons()
 
