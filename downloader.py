@@ -158,6 +158,9 @@ class DownloadQueue:
         # 回调
         self.on_progress: ProgressCallback | None = None
         self.on_status_change: ProgressCallback | None = None
+        # 同名文件冲突回调：返回 "overwrite" | "skip" | "rename"
+        # 由调用方（GUI）在 UI 线程弹窗确认；下载线程阻塞等待返回值
+        self.on_file_exists: Callable[[DownloadTask], str] | None = None
 
     # ---- 属性 ----
 
@@ -279,6 +282,27 @@ class DownloadQueue:
             self._notify_status(task)
             return
 
+        # 同名文件冲突检查（下载前）
+        if os.path.exists(task.filepath) and self.on_file_exists is not None:
+            action = self.on_file_exists(task)
+            if action == "skip":
+                task.status = TaskStatus.CANCELLED
+                task.error = "用户取消：已存在同名文件"
+                self._notify_status(task)
+                return
+            elif action == "rename":
+                task.filepath = self._unique_filepath(task.filepath)
+                log.info("重命名下载: %s → %s", task.display_name, task.filepath)
+            elif action == "overwrite":
+                if os.path.exists(task.filepath):
+                    try:
+                        os.remove(task.filepath)
+                    except OSError as e:
+                        task.error = f"无法删除旧文件: {e}"
+                        task.status = TaskStatus.FAILED
+                        self._notify_status(task)
+                        return
+
         task.status = TaskStatus.DOWNLOADING
         self._notify_status(task)
 
@@ -373,3 +397,12 @@ class DownloadQueue:
                 self.on_status_change(task)
             except Exception:
                 pass
+
+    @staticmethod
+    def _unique_filepath(filepath: str) -> str:
+        """生成不冲突的新路径：artist - title (1).ext"""
+        base, ext = os.path.splitext(filepath)
+        i = 1
+        while os.path.exists(f"{base} ({i}){ext}"):
+            i += 1
+        return f"{base} ({i}){ext}"

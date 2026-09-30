@@ -2095,6 +2095,7 @@ class _Bus(QObject):
     search_err = pyqtSignal(str)
     task_changed = pyqtSignal(str)
     tip_record = pyqtSignal(str)
+    file_exists = pyqtSignal(object)  # DownloadTask，由下载线程触发，UI 线程处理
 
 
 # ==================== 主窗口 ====================
@@ -2124,12 +2125,16 @@ class MainWindow(QMainWindow):
         self._task_rows: dict[str, TaskRow] = {}
         self._queue_running = False
         self._themed: list[Any] = []
+        # 同名文件冲突弹窗的跨线程同步（下载线程阻塞等待 UI 选择）
+        self._fe_event: Optional[threading.Event] = None
+        self._fe_choice: Optional[str] = None
 
         self.bus = _Bus()
         self.bus.search_ok.connect(self._on_search_ok)
         self.bus.search_err.connect(self._on_search_err)
         self.bus.task_changed.connect(self._on_task_changed)
         self.bus.tip_record.connect(self._on_tip_record)
+        self.bus.file_exists.connect(self._on_file_exists_dialog)
 
         # ---- 骨架 ----
         self.ambient = AmbientBackground(self.theme)
@@ -2651,6 +2656,7 @@ class MainWindow(QMainWindow):
             self._queue = DownloadQueue(directory=self.download_dir)
             self._queue.on_progress = self._on_queue_progress
             self._queue.on_status_change = self._on_queue_status_change
+            self._queue.on_file_exists = self._on_queue_file_exists
         self._queue.directory = ensure_download_dir(self.download_dir)
 
         added = 0
@@ -2718,6 +2724,44 @@ class MainWindow(QMainWindow):
 
     def _on_queue_status_change(self, task: DownloadTask) -> None:
         self.bus.task_changed.emit(task.task_id)
+
+    def _on_queue_file_exists(self, task: DownloadTask) -> str:
+        """下载线程回调：发现同名文件时请求 UI 决策，阻塞等待返回。"""
+        event = threading.Event()
+        self._fe_event = event
+        self._fe_choice = None
+        self.bus.file_exists.emit(task)
+        event.wait()
+        return self._fe_choice or "skip"
+
+    def _on_file_exists_dialog(self, task: DownloadTask) -> None:
+        """UI 线程槽：弹出冲突选择框，回写结果并唤醒下载线程。"""
+        choice = self._show_overwrite_dialog(task)
+        self._fe_choice = choice
+        if self._fe_event is not None:
+            self._fe_event.set()
+
+    def _show_overwrite_dialog(self, task: DownloadTask) -> str:
+        """同名文件冲突三选一对话框，返回 overwrite / skip / rename。"""
+        name = os.path.basename(task.filepath)
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("同名文件已存在")
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setText(f"检测到当前路径已存在同名歌曲文件：\n{name}")
+        dlg.setInformativeText("请选择处理方式：")
+        btn_overwrite = dlg.addButton(
+            "覆盖现有文件", QMessageBox.ButtonRole.AcceptRole)
+        btn_skip = dlg.addButton(
+            "保留现有文件并取消本次下载", QMessageBox.ButtonRole.RejectRole)
+        btn_rename = dlg.addButton(
+            "保留现有文件并将新文件重命名下载", QMessageBox.ButtonRole.ActionRole)
+        dlg.exec()
+        clicked = dlg.clickedButton()
+        if clicked is btn_rename:
+            return "rename"
+        if clicked is btn_overwrite:
+            return "overwrite"
+        return "skip"
 
     def _on_task_changed(self, task_id: str) -> None:
         row = self._task_rows.get(task_id)
