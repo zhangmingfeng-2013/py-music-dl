@@ -95,6 +95,7 @@ def _search_migu(keyword: str, limit: int = 10) -> list[SongDict]:
         "gm": keyword, "n": "", "num": limit, "type": "json",
     })
     if not data or data.get("code") != 200 or not isinstance(data.get("data"), list):
+        log.warning("咪咕搜索失败: %s", (data or {}).get("message", "无响应"))
         return []
     return [
         {
@@ -111,6 +112,7 @@ def _search_netease(keyword: str, page: int = 1, num: int = 10) -> list[SongDict
     url = "https://api.vkeys.cn/v2/music/netease"
     data = _get_json(url, params={"word": keyword, "page": page, "num": num})
     if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+        log.warning("网易云搜索失败: 上游返回异常响应")
         return []
     results: list[SongDict] = []
     for idx, item in enumerate(data["data"]):
@@ -149,6 +151,10 @@ def _search_kuwo(keyword: str, limit: int = 10) -> list[SongDict]:
     """搜索酷我音乐"""
     url = "https://kw-api.cenguigui.cn/"
     data = _get_json(url, params={"name": keyword, "page": 1, "limit": limit})
+    if not isinstance(data, dict) or not isinstance(data.get("data"), (list, dict)):
+        log.warning("酷我搜索失败: 上游返回异常响应（%s）",
+                    "空/非 JSON 响应" if data is None else f"data 字段类型 {type(data.get('data')).__name__}")
+        return []
     songs: list = []
     if isinstance(data, dict) and data.get("data"):
         raw = data["data"]
@@ -229,6 +235,8 @@ def _detail_qq(song: SongDict) -> SongDict | None:
         or data.get("song_play_url")
     )
     if not audio_url:
+        if data.get("vip") == "付费":
+            log.info("QQ 付费歌曲无下载链接: %s", data.get("song_title") or song.get("title"))
         return None
     return {
         "title": data.get("song_title") or song.get("title", ""),
@@ -372,6 +380,11 @@ def prefetch_quality(songs: list[SongDict], max_workers: int = MAX_WORKERS) -> N
     log.info("音质预取完成（%d/%d 首已知）", known, len(songs))
 
 
+def _norm_key(s: Any) -> str:
+    """标题/歌手一致性比较用归一化：小写 + 去空白"""
+    return "".join(str(s or "").split()).lower()
+
+
 def get_song_detail(song: SongDict) -> SongDict | None:
     """根据歌曲来源获取详情（含下载链接）"""
     source = song.get("source", "")
@@ -380,8 +393,18 @@ def get_song_detail(song: SongDict) -> SongDict | None:
         log.warning("未知平台: %s", source)
         return None
     detail = detail_fn(song)
-    if detail and detail.get("audio_url"):
-        log.info("获取到下载链接: %s - %s", detail.get("artist"), detail.get("title"))
-        return detail
-    log.warning("未获取到下载链接")
-    return None
+    if not detail or not detail.get("audio_url"):
+        log.warning("未获取到下载链接")
+        return None
+    # 一致性校验：详情标题与搜索项完全不同才视为错误歌曲；
+    # 一方为另一方前缀/子串视为一致（部分平台 detail 的 song_title 为截短版）
+    st = _norm_key(song.get("title") or song.get("name"))
+    dt = _norm_key(detail.get("title"))
+    if st and dt and not (st.startswith(dt) or dt.startswith(st)):
+        log.warning("详情与搜索项不一致（%s ≠ %s），已丢弃", detail.get("title"), song.get("title"))
+        return None
+    # 歌手缺失时回填搜索项，保证下载文件与列表展示一致
+    if not detail.get("artist"):
+        detail["artist"] = song.get("artist", "") or song.get("singer", "")
+    log.info("获取到下载链接: %s - %s", detail.get("artist"), detail.get("title"))
+    return detail
