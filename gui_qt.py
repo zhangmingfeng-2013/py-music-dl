@@ -867,7 +867,9 @@ class _MenuRow(QAbstractButton):
         self._hover = 0.0
         self._pressed = 0.0
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(32)
+        self.setFixedHeight(38)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         # clicked 会带 checked 参数，统一包装为无参回调，避免污染带默认参的 lambda
         self.clicked.connect(lambda *_a: on_pick())
 
@@ -896,21 +898,26 @@ class _MenuRow(QAbstractButton):
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        rect = QRectF(self.rect()).adjusted(2, 1, -2, -1)
+        rect = QRectF(self.rect()).adjusted(3, 2, -3, -2)
         pal = self._pal
         base = qc(pal.card, 0)
         paint_glass_surface(p, rect, 9, fill=base,
                             hover=self._hover, pressed=self._pressed,
                             sheen=0.0, rim=(0.0, 0.0))
-        # 文本
+        # 文本：左侧 18px 内边距，右侧为选中点预留 40px，超长省略号收尾
         p.setPen(qc(pal.text))
-        p.setFont(qt_font(12, bold=self._checked))
-        p.drawText(rect.adjusted(14, 0, -34, 0),
+        f = qt_font(12, bold=self._checked)
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 102)
+        p.setFont(f)
+        text_rect = rect.adjusted(18, 0, -40, 0)
+        elided = p.fontMetrics().elidedText(
+            self._text, Qt.TextElideMode.ElideRight, int(text_rect.width()))
+        p.drawText(text_rect,
                    int(Qt.AlignmentFlag.AlignVCenter) | int(Qt.AlignmentFlag.AlignLeft),
-                   self._text)
+                   elided)
         # 选中指示点
         if self._checked:
-            cx = rect.right() - 18
+            cx = rect.right() - 20
             cy = rect.center().y()
             p.setBrush(qc(pal.accent))
             p.setPen(Qt.PenStyle.NoPen)
@@ -921,34 +928,89 @@ class _MenuRow(QAbstractButton):
 class GlassMenu(GlassOverlay):
     """折射玻璃菜单：sections = [(标题|None, [(value, label, checked), …])]"""
 
-    ITEM_H = 32
-    SECTION_H = 24
+    ITEM_H = 38
+    SECTION_H = 26
+    MAX_H = 440
+    MAX_TEXT_W = 320  # 文本区最大宽度，超出省略号收尾
 
     def __init__(self, ambient: AmbientBackground, pal,
                  sections: list[tuple[Optional[str], list[tuple[str, str, bool]]]],
                  on_pick: Callable[[str], None], *, min_width: int = 190) -> None:
         items = sum(len(g) for _t, g in sections)
         heads = sum(1 for t, _g in sections if t)
-        height = items * self.ITEM_H + heads * self.SECTION_H + 16
-        super().__init__(ambient, max(min_width, 210), min(height, 420), radius=18, scrim=18)
+        rows = items + heads
+        # 面板宽度按最长文本计算：左缩进 18 + 右侧选中点区 40 + 行内边距 6 + 布局外边距 24
+        fm = QFontMetrics(qt_font(12))
+        text_w = 0
+        for _t, group in sections:
+            for _v, label, _c in group:
+                text_w = max(text_w, fm.horizontalAdvance(label))
+        text_w = min(text_w, self.MAX_TEXT_W)
+        panel_w = max(min_width, 220, text_w + 18 + 40 + 6 + 24)
+        height = items * self.ITEM_H + heads * self.SECTION_H + max(0, rows - 1) * 4 + 24
+        super().__init__(ambient, panel_w, min(height, self.MAX_H),
+                         radius=18, scrim=18)
         self._on_pick = on_pick
+        self._pal = pal
         lay = self.content()
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(2)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(0)
+        # 内容超出 MAX_H 时进入滚动区，行高保持 ITEM_H 不被压缩
+        scroll = QScrollArea(self.panel)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background: {pal.card}; }}"
+            f"QScrollArea > QWidget > QWidget {{ background: {pal.card}; }}"
+            "QScrollBar:vertical { width: 6px; background: transparent; }"
+            "QScrollBar::handle:vertical { background: rgba(128,128,128,90);"
+            " border-radius: 3px; min-height: 28px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }")
+        holder = QWidget()
+        holder.setStyleSheet(f"background: {pal.card};")
+        hold_lay = QVBoxLayout(holder)
+        hold_lay.setContentsMargins(0, 0, 0, 0)
+        hold_lay.setSpacing(4)
         for title, group in sections:
             if title:
-                lbl = QLabel(title, self.panel)
+                lbl = QLabel(title, holder)
                 lbl.setFont(qt_font(10))
-                lbl.setFixedHeight(self.SECTION_H - 6)
+                lbl.setFixedHeight(self.SECTION_H)
                 self._style_label(lbl, pal)
-                lay.addWidget(lbl)
+                hold_lay.addWidget(lbl)
             for value, label, checked in group:
                 row = _MenuRow(label, checked, pal,
                                lambda v=value: (self.close(), self._on_pick(v)),
-                               self.panel)
-                lay.addWidget(row)
+                               holder)
+                hold_lay.addWidget(row)
                 self._rows = getattr(self, "_rows", [])
                 self._rows.append(row)
+        scroll.setWidget(holder)
+        lay.addWidget(scroll)
+
+    def paintEvent(self, _e) -> None:  # noqa: N802
+        """绘制：菜单面板用主题 card 不透明色填充，不再走折射渲染，确保文字可读。"""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = self._reveal
+        # 遮罩暗化
+        p.fillRect(self.rect(), QColor(6, 8, 16, int(self._scrim * r)))
+        # 面板：主题 card 不透明圆角矩形
+        c = qc(self._pal.card)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.panel.geometry()), self._radius, self._radius)
+        p.setOpacity(r)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(c.red(), c.green(), c.blue(), 255))
+        p.drawPath(path)
+        # 细边框保持视觉层次
+        p.setPen(QPen(qc(self._pal.text, 40), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(path)
+        p.setOpacity(1.0)
+        p.end()
 
     @staticmethod
     def _style_label(lbl: QLabel, pal) -> None:
