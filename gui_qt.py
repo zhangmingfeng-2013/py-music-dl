@@ -2584,12 +2584,15 @@ class MainWindow(QMainWindow):
             self._on_search()
 
     def _update_filter_options(self) -> None:
-        artists: set[str] = set(self.artist_history.get_all())
+        # 歌手下拉仅列当前搜索结果中实际存在的歌手，避免历史歌手选后无结果
+        artists: set[str] = set()
         for song in self.search_results:
             artist = song.get("artist", "") or song.get("singer", "")
             if artist:
                 self.artist_history.add(artist)
                 artists.add(artist)
+        self.artist_filter.set("全部")
+        self.source_filter.set("全部")
         self.artist_filter.set_values(["全部"] + sorted(artists))
         self.source_filter.set_values(["全部"] + list(PLATFORM_NAMES))
 
@@ -2657,6 +2660,17 @@ class MainWindow(QMainWindow):
             self.download_all_btn.setEnabled(True)
             self._log(f"搜索完成: 共 {len(results)} 首歌曲（四平台交错排列）")
         else:
+            # 无结果：清空旧数据并重置筛选，避免旧结果/旧筛选残留
+            self.search_results = []
+            self.filtered_results = []
+            self.tree.clear()
+            self.count_lbl.setText("")
+            self.download_sel_btn.setEnabled(False)
+            self.download_all_btn.setEnabled(False)
+            self.artist_filter.set("全部")
+            self.source_filter.set("全部")
+            self.artist_filter.set_values(["全部"])
+            self.source_filter.set_values(["全部"] + list(PLATFORM_NAMES))
             self._log("未找到相关歌曲，请更换关键词")
             self._set_status("未找到相关歌曲", "warn")
         self.search_btn.setEnabled(True)
