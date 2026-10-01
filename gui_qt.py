@@ -2355,18 +2355,15 @@ class MainWindow(QMainWindow):
                                         command=self._open_download_dir)
         self.clear_results_btn = GlassButton("清空结果", kind="ghost", glyph="trash",
                                              command=self._clear_results)
-        self.clear_history_btn = GlassButton("清空历史", kind="ghost", glyph="clock",
-                                             command=self._clear_history)
         for b in (self.download_sel_btn, self.download_all_btn, self.open_dir_btn,
-                  self.clear_results_btn, self.clear_history_btn):
+                  self.clear_results_btn):
             row.addWidget(b)
         row.addStretch(1)
         root.addLayout(row)
         self.download_sel_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
         self._themed += [self.download_sel_btn, self.download_all_btn,
-                         self.open_dir_btn, self.clear_results_btn,
-                         self.clear_history_btn]
+                         self.open_dir_btn, self.clear_results_btn]
 
     def _build_tasks(self, root: QVBoxLayout) -> None:
         self.tasks_panel = GlassPanel(self.ambient, pad=(12, 10, 12, 10))
@@ -2528,17 +2525,13 @@ class MainWindow(QMainWindow):
         pal = self.theme.palette
         menu = GlassMenu(
             self.ambient, pal,
-            [(None, [(k, k, False) for k in history]),
-             (None, [("__clear__", "清空历史", False)])],
+            [(None, [(k, k, False) for k in history])],
             self._on_history_pick, min_width=self.search_field.width() - 20,
         )
         gl = self.search_field.mapToGlobal(QPoint(6, self.search_field.height() + 4))
         menu.open_at(gl)
 
     def _on_history_pick(self, key: str) -> None:
-        if key == "__clear__":
-            self._clear_history()
-            return
         self.search_field.set(key)
         self._on_search()
 
@@ -2572,10 +2565,6 @@ class MainWindow(QMainWindow):
             subprocess.run(["explorer", os.path.normpath(self.download_dir)], check=False)
         else:
             subprocess.run(["xdg-open", self.download_dir], check=False)
-
-    def _clear_history(self) -> None:
-        self.search_history.clear()
-        QMessageBox.information(self, "提示", "搜索历史已清空")
 
     # ---------- 筛选 ----------
 
