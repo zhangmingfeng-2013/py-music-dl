@@ -385,8 +385,56 @@ def _norm_key(s: Any) -> str:
     return "".join(str(s or "").split()).lower()
 
 
-def get_song_detail(song: SongDict) -> SongDict | None:
-    """根据歌曲来源获取详情（含下载链接）"""
+# ---- 版本识别（元数据验证，避免伴奏/错误版本）----
+
+# 高置信：伴奏/无人声版本，搜索目标本身不含该标记时直接拦截
+BAD_VERSION_MARKERS: tuple[str, ...] = (
+    "伴奏", "无人声", "纯伴奏", "消音", "instrumental", "karaoke", "ktv伴奏",
+    "off vocal", "offvocal", "inst.", "(inst)", "（inst",
+)
+# 低置信：翻唱/现场/剪辑等变体，标记提示但允许用户自行决定
+VARIANT_VERSION_MARKERS: tuple[str, ...] = (
+    "翻唱", "cover", "live", "现场", "演唱会", "remix", "dj版", "铃声",
+    "片段", "剪辑", "节选", "cover版", "女声版", "男声版", "钢琴版",
+)
+
+
+def _find_marker(title: str, markers: tuple[str, ...]) -> str:
+    t = (title or "").lower()
+    for m in markers:
+        if m in t:
+            return m
+    return ""
+
+
+def detect_version_risk(candidate_title: str, base_title: str = "") -> tuple[str, str]:
+    """识别候选音源相对搜索目标的版本风险。
+
+    返回 (level, marker)：
+      ("bad", 标记)     疑似伴奏/纯音乐等错误版本
+      ("variant", 标记) 翻唱/现场/剪辑等变体
+      ("", "")          未发现风险
+    仅当标记出现在候选标题、而搜索目标本身不含该标记时才告警，
+    用户主动搜索“XX 伴奏”不会被误杀。
+    """
+    cand = str(candidate_title or "")
+    base = str(base_title or "")
+    marker = _find_marker(cand, BAD_VERSION_MARKERS)
+    if marker and marker not in base.lower():
+        return "bad", marker
+    marker = _find_marker(cand, VARIANT_VERSION_MARKERS)
+    if marker and marker not in base.lower():
+        return "variant", marker
+    return "", ""
+
+
+def resolve_song(song: SongDict) -> SongDict | None:
+    """解析音源（含下载链接/音质/版本标记），不拦截任何版本，供试听与预取使用。
+
+    返回的 detail 额外带：
+      version_tag:   "bad" | "variant" | ""
+      version_label: 触发的标记词（可空）
+    """
     source = song.get("source", "")
     detail_fn = _DETAILERS.get(source)
     if not detail_fn:
@@ -406,5 +454,23 @@ def get_song_detail(song: SongDict) -> SongDict | None:
     # 歌手缺失时回填搜索项，保证下载文件与列表展示一致
     if not detail.get("artist"):
         detail["artist"] = song.get("artist", "") or song.get("singer", "")
-    log.info("获取到下载链接: %s - %s", detail.get("artist"), detail.get("title"))
+    # 版本识别：以详情标题为准，对照搜索目标
+    level, marker = detect_version_risk(
+        detail.get("title") or "", song.get("title") or song.get("name") or ""
+    )
+    detail["version_tag"] = level
+    detail["version_label"] = marker
+    log.info("获取到下载链接: %s - %s%s",
+             detail.get("artist"), detail.get("title"),
+             f"（{marker}）" if marker else "")
+    return detail
+
+
+def get_song_detail(song: SongDict) -> SongDict | None:
+    """根据歌曲来源获取详情（含下载链接）；疑似伴奏/纯音乐版本直接拦截。"""
+    detail = resolve_song(song)
+    if detail and detail.get("version_tag") == "bad":
+        log.warning("疑似伴奏/无人声音源（%s），已拦截: %s",
+                    detail.get("version_label"), detail.get("title"))
+        return None
     return detail

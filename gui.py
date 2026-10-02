@@ -56,7 +56,11 @@ APP_VERSION = "v3.1"
 APP_SUBTITLE = "多平台聚合 · 咪咕 网易云 QQ音乐 酷我"
 
 SETTINGS_FILE = "settings.json"
-DEFAULT_SETTINGS = {"scheme": "liquid", "theme_mode": "auto"}
+DEFAULT_SETTINGS = {
+    "scheme": "liquid", "theme_mode": "auto",
+    # 下载限速（KB/s，0 = 不限速）
+    "per_task_speed": 0, "global_speed": 0,
+}
 
 # ---- 开发者打赏 ----
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -620,7 +624,7 @@ PAL: Palette = SCHEMES["liquid"]["light"]
 
 
 def load_settings() -> dict[str, Any]:
-    """读取界面偏好（设计方案 / 外观模式）"""
+    """读取界面偏好（设计方案 / 外观模式 / 下载限速）"""
     data = dict(DEFAULT_SETTINGS)
     try:
         if os.path.exists(SETTINGS_FILE):
@@ -631,15 +635,32 @@ def load_settings() -> dict[str, Any]:
                     data["scheme"] = saved["scheme"]
                 if saved.get("theme_mode") in ("auto", "light", "dark"):
                     data["theme_mode"] = saved["theme_mode"]
+                for key in ("per_task_speed", "global_speed"):
+                    try:
+                        val = int(saved.get(key, 0))
+                        data[key] = max(0, val)
+                    except (TypeError, ValueError):
+                        pass
     except Exception:
         pass
     return data
 
 
 def save_settings(data: dict[str, Any]) -> None:
+    """合并写入：保留文件中已有的其他键（主题切换不会清掉限速等设置）"""
+    merged: dict[str, Any] = {}
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                old = json.load(f)
+            if isinstance(old, dict):
+                merged.update(old)
+    except Exception:
+        pass
+    merged.update(data)
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(merged, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 

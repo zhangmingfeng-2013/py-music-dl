@@ -1,4 +1,7 @@
 {
   "scheme": "liquid",
-  "theme_mode": "auto"
+  "theme_mode": "auto",
+  "per_task_speed": 0,
+  "global_speed": 0,
+  "download_dir": "/Users/zhangmingfeng/Projects/py-music-dl/downloaded_music"
 }

@@ -16,7 +16,7 @@ import hashlib
 import threading
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Optional
 
 import requests
 import urllib3
@@ -39,6 +39,53 @@ HEADERS: dict[str, str] = {
 
 DEFAULT_TIMEOUT: int = 60
 CHUNK_SIZE: int = 8192
+
+# ---- 速度限制（令牌桶）----
+
+
+class RateLimiter:
+    """线程安全令牌桶限速器。
+
+    rate_bps <= 0 表示不限速；桶容量为 1 秒额度（允许短时突发）。
+    可被多个下载线程共享（全局限速），也可每任务独立（单任务限速）。
+    """
+
+    def __init__(self, rate_bps: int = 0) -> None:
+        self._rate = max(0, int(rate_bps))
+        self._lock = threading.Lock()
+        self._tokens: float = float(self._rate)  # 初始满桶
+        self._last = time.monotonic()
+
+    def set_rate(self, rate_bps: int) -> None:
+        """动态调整限速（0 = 不限速），立即生效。"""
+        with self._lock:
+            self._rate = max(0, int(rate_bps))
+            if self._rate > 0:
+                # 换额后桶内余量不超过新额度 1 秒，避免瞬间突发
+                self._tokens = min(self._tokens, float(self._rate))
+
+    @property
+    def rate_bps(self) -> int:
+        return self._rate
+
+    def consume(self, size: int) -> None:
+        """申领 size 字节额度，不足则阻塞等待。"""
+        while True:
+            with self._lock:
+                if self._rate <= 0:
+                    return
+                now = time.monotonic()
+                self._tokens = min(
+                    float(self._rate),
+                    self._tokens + (now - self._last) * self._rate,
+                )
+                self._last = now
+                if self._tokens >= size:
+                    self._tokens -= size
+                    return
+                wait = (size - self._tokens) / self._rate
+            # 分段睡眠，保证设置变更/暂停能快速响应
+            time.sleep(min(wait, 0.05))
 
 # ---- 进度回调类型 ----
 
@@ -80,6 +127,9 @@ class DownloadTask:
     downloaded: int = 0
     status: TaskStatus = TaskStatus.PENDING
 
+    # 实时速度（字节/秒，EWMA 平滑；非下载状态为 0）
+    speed_bps: float = 0.0
+
     # 错误信息
     error: str = ""
 
@@ -89,6 +139,7 @@ class DownloadTask:
         default_factory=lambda: threading.Event(), repr=False
     )
     _cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
+    _speed_ts: float = field(default=0.0, repr=False)
 
     def __post_init__(self) -> None:
         """初始化后设置 _pause_event 为 set（不暂停状态）"""
@@ -114,10 +165,12 @@ class DownloadTask:
         if self.status == TaskStatus.DOWNLOADING:
             self._pause_event.clear()
             self.status = TaskStatus.PAUSED
+            self.speed_bps = 0.0
             log.info("暂停: %s", self.display_name)
 
     def resume_after_pause(self) -> None:
         """恢复下载 — 设置事件使 wait() 返回"""
+        self._speed_ts = 0.0  # 丢弃暂停期间的时间差，避免速度被平均为近 0
         self._pause_event.set()
         self.status = TaskStatus.DOWNLOADING
 
@@ -147,9 +200,15 @@ class DownloadQueue:
     """
 
     def __init__(self, directory: str = "downloaded_music",
-                 max_retries: int = 2):
+                 max_retries: int = 2,
+                 per_task_limit: int = 0,
+                 global_limiter: Optional["RateLimiter"] = None):
         self.directory = ensure_download_dir(directory)
         self.max_retries = max_retries
+        # 单任务限速（每个任务独立令牌桶）；0 = 不限速
+        self.per_task_limit = max(0, int(per_task_limit))
+        # 全局限速（队列内所有任务共享）；外部可传入同一个实例跨队列共享
+        self.global_limiter = global_limiter
         self._tasks: list[DownloadTask] = []
         self._current_idx: int = -1
         self._lock = threading.Lock()
@@ -254,6 +313,26 @@ class DownloadQueue:
             for t in self._tasks:
                 t.cancel()
 
+    def set_limits(self, per_task_bps: int, global_bps: int) -> None:
+        """运行中动态调整限速（字节/秒，0 = 不限速）。"""
+        self.per_task_limit = max(0, int(per_task_bps))
+        if global_bps and global_bps > 0:
+            if self.global_limiter is None:
+                self.global_limiter = RateLimiter(global_bps)
+            else:
+                self.global_limiter.set_rate(global_bps)
+        elif self.global_limiter is not None:
+            self.global_limiter.set_rate(0)
+
+    @property
+    def total_speed_bps(self) -> float:
+        """当前所有下载中任务的实时速度之和。"""
+        with self._lock:
+            return sum(
+                t.speed_bps for t in self._tasks
+                if t.status == TaskStatus.DOWNLOADING
+            )
+
     # ---- 内部 ----
 
     def _run(self) -> None:
@@ -304,7 +383,12 @@ class DownloadQueue:
                         return
 
         task.status = TaskStatus.DOWNLOADING
+        task.speed_bps = 0.0
+        task._speed_ts = 0.0
         self._notify_status(task)
+
+        # 单任务限速桶（限额动态跟随 self.per_task_limit）
+        task_limiter: Optional[RateLimiter] = None
 
         # HTTP Range 断点续传
         existing_size = 0
@@ -358,14 +442,46 @@ class DownloadQueue:
                             # 检查取消
                             if task._cancel_event.is_set():
                                 task.status = TaskStatus.CANCELLED
+                                task.speed_bps = 0.0
+                                self._notify_status(task)
+                                return
+
+                            # 限速：先全局后单任务（两者同时生效，取更严格约束）
+                            if self.global_limiter is not None:
+                                self.global_limiter.consume(len(chunk))
+                            if self.per_task_limit > 0:
+                                if task_limiter is None:
+                                    task_limiter = RateLimiter(self.per_task_limit)
+                                task_limiter.set_rate(self.per_task_limit)
+                                task_limiter.consume(len(chunk))
+
+                            # 限速等待期间可能已暂停/取消，再校验一次
+                            task._pause_event.wait()
+                            if task._cancel_event.is_set():
+                                task.status = TaskStatus.CANCELLED
+                                task.speed_bps = 0.0
                                 self._notify_status(task)
                                 return
 
                             f.write(chunk)
                             task.downloaded += len(chunk)
+
+                            # 实时速度（EWMA 平滑）
+                            now = time.monotonic()
+                            if task._speed_ts > 0:
+                                dt = now - task._speed_ts
+                                if dt > 0:
+                                    inst = len(chunk) / dt
+                                    task.speed_bps = (
+                                        inst if task.speed_bps <= 0
+                                        else task.speed_bps * 0.6 + inst * 0.4
+                                    )
+                            task._speed_ts = now
+
                             self._notify_progress(task)
 
                 task.status = TaskStatus.COMPLETED
+                task.speed_bps = 0.0
                 self._notify_status(task)
                 log.info("下载完成: %s → %s", task.display_name, task.filepath)
                 return
@@ -377,10 +493,12 @@ class DownloadQueue:
                     time.sleep(1 * (attempt + 1))
                 else:
                     task.status = TaskStatus.FAILED
+                    task.speed_bps = 0.0
                     self._notify_status(task)
             except IOError as e:
                 task.error = str(e)
                 task.status = TaskStatus.FAILED
+                task.speed_bps = 0.0
                 self._notify_status(task)
                 return
 

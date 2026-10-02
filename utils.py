@@ -105,3 +105,73 @@ def quality_from_ext(ext: str) -> str:
 def quality_from_url(url: str) -> str:
     """直接从 URL 推断音质"""
     return quality_from_ext(ext_from_url(url))
+
+
+# ---- 音质等级（筛选）----
+
+# tier: standard=标准 / hq=高清 / lossless=无损 / unknown=未知
+TIER_STANDARD = "standard"
+TIER_HQ = "hq"
+TIER_LOSSLESS = "lossless"
+TIER_UNKNOWN = "unknown"
+
+TIER_ORDER: dict[str, int] = {
+    TIER_STANDARD: 1, TIER_HQ: 2, TIER_LOSSLESS: 3, TIER_UNKNOWN: 0,
+}
+TIER_LABELS: dict[str, str] = {
+    TIER_STANDARD: "标准", TIER_HQ: "高清",
+    TIER_LOSSLESS: "无损", TIER_UNKNOWN: "未知",
+}
+
+
+def quality_tier(quality: str = "", url: str = "") -> str:
+    """把音质标签/URL 归一化为 standard/hq/lossless/unknown 四档。
+
+    无损：flac/ape/wav 等无损封装
+    高清：320K mp3、明确的高码率链接
+    标准：其他可识别音频（128K、m4a/aac 等）
+    未知：尚无音频链接或无法判断
+    """
+    ext = ""
+    if url:
+        ext = ext_from_url(url)
+        if ext in _LOSSLESS_EXTS:
+            return TIER_LOSSLESS
+    q = (quality or "").strip().upper()
+    if q in ("LOSSLESS", "FLAC", "APE", "WAV", "SQ", "HIRES", "HI-RES"):
+        return TIER_LOSSLESS
+    if q in ("320K", "HQ", "320", "320KBPS"):
+        return TIER_HQ
+    # 纯码率标签（128K/192KBPS 等）按码率判定
+    import re as _re
+    if q:
+        m_label = _re.fullmatch(r"(\d{2,3})\s*(?:k|kbps)?", q, _re.IGNORECASE)
+        if m_label:
+            kbps = int(m_label.group(1))
+            if kbps >= 320:
+                return TIER_HQ
+            if kbps >= 96:
+                return TIER_STANDARD
+    # 链接中带明确码率参数时按码率判定
+    m = _re.search(r"[?&/](?:br|bitrate|bk)=?(\d{2,3})(?:k)?(?:bps)?(?:&|$|/)",
+                   (url or "").lower())
+    if m:
+        kbps = int(m.group(1))
+        if kbps >= 320:
+            return TIER_HQ
+        if kbps >= 96:
+            return TIER_STANDARD
+    if ext in ("mp3", "m4a", "ogg", "aac", "wma"):
+        return TIER_STANDARD
+    return TIER_UNKNOWN
+
+
+# ---- 速度格式化 ----
+
+def format_speed(bps: float) -> str:
+    """字节/秒 → 可读速度"""
+    if not bps or bps <= 0:
+        return "--"
+    if bps >= 1024 * 1024:
+        return f"{bps / (1024 * 1024):.1f} MB/s"
+    return f"{bps / 1024:.0f} KB/s"
