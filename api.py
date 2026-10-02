@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -192,6 +193,8 @@ def _detail_migu(song: SongDict) -> SongDict | None:
     return {
         "title": data.get("title") or song.get("title", ""),
         "artist": data.get("singer") or song.get("artist", ""),
+        "album": data.get("album") or data.get("album_name") or song.get("album", ""),
+        "year": str(data.get("year") or data.get("publish_year") or ""),
         "cover": data.get("cover") or song.get("cover"),
         "audio_url": audio_url,
         "lrc_url": data.get("lrc_url"),
@@ -210,13 +213,25 @@ def _detail_netease(song: SongDict) -> SongDict | None:
         return None
     d = data[0]
     audio_url = d.get("url", "")
-    return {
+    detail: SongDict = {
         "title": d.get("name") or song.get("title", ""),
         "artist": d.get("artist") or song.get("artist", ""),
+        "album": song.get("album", "") or d.get("album", ""),
+        "year": "",
         "cover": d.get("pic") or song.get("cover"),
         "audio_url": audio_url,
+        # Meting 标准响应的 lrc 字段为歌词链接
+        "lrc_url": d.get("lrc") or None,
         "quality": quality_from_url(audio_url) if audio_url else "?",
     }
+    # 网易云官方详情补全专辑名/发行年份（失败不影响主流程）
+    if song_id:
+        extra = _netease_extra(song_id)
+        if extra:
+            detail["album"] = detail["album"] or extra.get("album", "")
+            detail["year"] = extra.get("year", "") or detail["year"]
+            detail["cover"] = detail["cover"] or extra.get("cover")
+    return detail
 
 
 def _detail_qq(song: SongDict) -> SongDict | None:
@@ -241,8 +256,11 @@ def _detail_qq(song: SongDict) -> SongDict | None:
     return {
         "title": data.get("song_title") or song.get("title", ""),
         "artist": data.get("singer_name") or song.get("artist", ""),
-        "cover": song.get("cover"),
+        "album": data.get("album_name") or song.get("album", ""),
+        "year": str(data.get("publish_time") or data.get("year") or ""),
+        "cover": data.get("song_cover") or data.get("cover") or song.get("cover"),
         "audio_url": audio_url,
+        "lrc_url": data.get("lrc_url") or data.get("song_lrc") or None,
         "quality": quality_from_url(audio_url),
     }
 
@@ -254,8 +272,11 @@ def _detail_kuwo(song: SongDict) -> SongDict | None:
         return {
             "title": song.get("title", ""),
             "artist": song.get("artist", ""),
+            "album": song.get("album", ""),
+            "year": str(song.get("year", "") or ""),
             "cover": song.get("cover"),
             "audio_url": audio_url,
+            "lrc_url": song.get("lrc_url"),
             "quality": quality_from_url(audio_url),
         }
     # 备用方案：通过 rid 请求
@@ -282,7 +303,10 @@ def _detail_kuwo(song: SongDict) -> SongDict | None:
         if audio_url:
             return {
                 "title": song.get("title", ""), "artist": song.get("artist", ""),
+                "album": song.get("album", ""),
+                "year": str(song.get("year", "") or ""),
                 "cover": song.get("cover"), "audio_url": audio_url,
+                "lrc_url": song.get("lrc_url"),
                 "quality": quality_from_url(audio_url),
             }
     except requests.RequestException:
@@ -454,6 +478,10 @@ def resolve_song(song: SongDict) -> SongDict | None:
     # 歌手缺失时回填搜索项，保证下载文件与列表展示一致
     if not detail.get("artist"):
         detail["artist"] = song.get("artist", "") or song.get("singer", "")
+    # 专辑/年份/封面/歌词链接：详情没给时用搜索项回填
+    for key in ("album", "year", "cover", "lrc_url"):
+        if not detail.get(key) and song.get(key):
+            detail[key] = song[key]
     # 版本识别：以详情标题为准，对照搜索目标
     level, marker = detect_version_risk(
         detail.get("title") or "", song.get("title") or song.get("name") or ""
@@ -474,3 +502,187 @@ def get_song_detail(song: SongDict) -> SongDict | None:
                     detail.get("version_label"), detail.get("title"))
         return None
     return detail
+
+
+# ---- 歌词 & 发行信息补全 ----
+
+_NETEASE_HEADERS: dict[str, str] = {**HEADERS, "Referer": "https://music.163.com/"}
+
+
+def _get_text(url: str, params: dict | None = None,
+              headers: dict | None = None, timeout: int = 8) -> str | None:
+    """GET 纯文本（lrc 用），失败返回 None。"""
+    try:
+        resp = requests.get(
+            url, headers=headers or HEADERS, params=params,
+            timeout=timeout, verify=False,
+        )
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding or "utf-8"
+        return resp.text
+    except requests.RequestException:
+        return None
+
+
+def _netease_extra(song_id: Any) -> SongDict | None:
+    """网易云官方歌曲详情：专辑名 / 发行年份 / 封面。"""
+    url = f"https://music.163.com/api/song/detail/?ids=%5B{song_id}%5D"
+    data = _get_json(url, headers=_NETEASE_HEADERS, timeout=6, quiet=True)
+    try:
+        info = data["songs"][0]
+        album = info.get("al") or info.get("album") or {}
+        # publishTime 为毫秒时间戳（个别专辑为脏数据如 9992678400000），
+        # 统一换算并校验年份范围
+        year = ""
+        try:
+            ts = int(album.get("publishTime") or 0)
+            if ts > 0:
+                if ts < 10_000_000_000:      # 秒级时间戳兜底
+                    ts *= 1000
+                y = datetime.datetime.fromtimestamp(ts / 1000,
+                                                     datetime.timezone.utc).year
+                if 1900 <= y <= 2100:
+                    year = str(y)
+        except (TypeError, ValueError, OSError, OverflowError):
+            year = ""
+        cover = ""
+        pics = album.get("picUrl") or (info.get("al") or {}).get("picUrl")
+        if pics:
+            cover = str(pics)
+        return {
+            "album": album.get("name", ""),
+            "year": year,
+            "cover": cover,
+        }
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _netease_lyrics_by_id(song_id: Any) -> str | None:
+    """按网易云歌曲 ID 取同步歌词原文。"""
+    url = "https://music.163.com/api/song/lyric"
+    data = _get_json(url, params={"id": song_id, "lv": 1, "kv": 1, "tv": -1},
+                     headers=_NETEASE_HEADERS, timeout=8, quiet=True)
+    if isinstance(data, dict):
+        lrc = data.get("lrc") or {}
+        text = lrc.get("lyric")
+        if text and text.strip():
+            return text
+    return None
+
+
+def _netease_search_lyric(title: str, artist: str = "") -> str | None:
+    """跨平台兜底：在网易云按“歌名 歌手”检索后取歌词。"""
+    kw = f"{title} {artist}".strip()
+    if not kw:
+        return None
+    search = _get_json(
+        "https://music.163.com/api/search/get/web",
+        params={"s": kw, "type": 1, "limit": 3, "offset": 0},
+        headers=_NETEASE_HEADERS, timeout=8, quiet=True,
+    )
+    try:
+        songs = search["result"]["songs"]
+    except (KeyError, TypeError):
+        return None
+    for item in songs or []:
+        # 歌名匹配才用，避免拿到同名错误版本
+        if _norm_key(title) and _norm_key(title) not in _norm_key(item.get("name")):
+            if _norm_key(item.get("name")) not in _norm_key(title):
+                continue
+        text = _netease_lyrics_by_id(item.get("id"))
+        if text:
+            return text
+    return None
+
+
+def _lrclib_lyrics(title: str, artist: str = "",
+                   album: str = "") -> str | None:
+    """lrclib.net 免费歌词库：优先精确匹配，再退化到搜索。"""
+    if not title:
+        return None
+    headers = {**_HEADERS, "Accept": "application/json"}
+
+    def _pick(item: dict) -> str | None:
+        if not isinstance(item, dict):
+            return None
+        return item.get("syncedLyrics") or item.get("plainLyrics")
+
+    data = _get_json(
+        "https://lrclib.net/api/get",
+        params={"artist_name": artist, "track_name": title,
+                "album_name": album, "duration": 0},
+        headers=headers, timeout=8, quiet=True,
+    )
+    text = _pick(data)
+    if text:
+        return text
+    items = _get_json(
+        "https://lrclib.net/api/search",
+        params={"track_name": title, "artist_name": artist},
+        headers=headers, timeout=8, quiet=True,
+    )
+    if isinstance(items, list):
+        for item in items[:5]:
+            text = _pick(item)
+            if text:
+                return text
+    return None
+
+
+def fetch_lyrics(meta: SongDict) -> str | None:
+    """按优先级获取 LRC 歌词文本，全部失败返回 None。
+
+    meta 可用键：lyrics（现成文本）/ lrc_url / source / song_id /
+                 title / artist / album
+    """
+    meta = meta or {}
+    text = str(meta.get("lyrics", "") or "").strip()
+    if text:
+        return text
+
+    # 1) 平台直出歌词链接
+    lrc_url = meta.get("lrc_url")
+    if lrc_url:
+        text = _get_text(str(lrc_url))
+        if text and "[" in text:
+            return text.strip()
+
+    # 2) 网易云 ID 直取
+    if meta.get("source") == "netease" and meta.get("song_id"):
+        text = _netease_lyrics_by_id(meta["song_id"])
+        if text:
+            return text
+
+    title = str(meta.get("title", "") or "").strip()
+    artist = str(meta.get("artist", "") or "").strip()
+    album = str(meta.get("album", "") or "").strip()
+
+    # 3) 网易云模糊检索（对其他平台的歌同样适用，中文歌词覆盖最好）
+    text = _netease_search_lyric(title, artist)
+    if text:
+        return text
+
+    # 4) lrclib 兜底
+    return _lrclib_lyrics(title, artist, album)
+
+
+def strip_lrc_timestamps(lrc: str) -> str:
+    """把 LRC 时间轴标签去掉，返回纯文本歌词（供预览窗口阅读）。"""
+    import re as _re
+    if not lrc:
+        return ""
+    line_re = _re.compile(r"\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\]")
+    tag_re = _re.compile(r"\[(?:ti|ar|al|by|offset|length|re|ve):[^\]]*\]", _re.I)
+    out: list[str] = []
+    for raw in lrc.splitlines():
+        line = tag_re.sub("", raw)
+        line = line_re.sub("", line).strip()
+        if line:
+            out.append(line)
+    # 去重相邻重复行（逐字歌词常见）
+    deduped: list[str] = []
+    for line in out:
+        if not deduped or deduped[-1] != line:
+            deduped.append(line)
+    return "\n".join(deduped)

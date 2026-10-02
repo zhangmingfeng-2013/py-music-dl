@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import csv
 import os
 import subprocess
 import sys
@@ -51,11 +52,11 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtWidgets import (
-    QAbstractButton, QAbstractItemView, QApplication, QDialog,
-    QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QScrollArea,
-    QSizePolicy, QSlider, QSpinBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget,
+    QAbstractButton, QAbstractItemView, QApplication, QCheckBox, QComboBox,
+    QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+    QScrollArea, QSizePolicy, QSlider, QSpinBox, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 import numpy as np
@@ -71,9 +72,11 @@ from gui import (  # noqa: E402
     TIP_METHODS, TIP_QR_FILES,
 )
 from api import (  # noqa: E402
-    PLATFORM_NAMES, detect_version_risk, resolve_song, search_all_platforms,
+    PLATFORM_NAMES, detect_version_risk, fetch_lyrics, resolve_song,
+    search_all_platforms, strip_lrc_timestamps,
 )
 from downloader import DownloadQueue, DownloadTask, RateLimiter, TaskStatus  # noqa: E402
+from media import CONVERT_FLAC, CONVERT_MP3, CONVERT_OFF, MP3_BITRATES, PostOptions, ffmpeg_available  # noqa: E402
 from utils import (  # noqa: E402
     DEFAULT_DOWNLOAD_DIR, ensure_download_dir, format_speed, quality_tier,
     TIER_HQ, TIER_LABELS, TIER_LOSSLESS, TIER_ORDER, TIER_STANDARD,
@@ -318,6 +321,30 @@ def draw_icon(p: QPainter, name: str, cx: float, cy: float,
         p.setBrush(color)
         p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(QRectF(cx - s * 0.5, cy - s * 0.5, s, s), 2, 2)
+    elif name == "list":
+        # 播放列表：三条带圆点的横线
+        for i, dy in enumerate((-0.45, 0.0, 0.45)):
+            p.drawLine(QPointF(cx - s * 0.62, cy + s * dy),
+                       QPointF(cx + s * 0.7, cy + s * dy))
+            p.drawEllipse(QPointF(cx - s * 0.78, cy + s * dy), 1.6, 1.6)
+    elif name == "doc":
+        # 文档（导出 CSV 用）
+        path = QPainterPath()
+        path.moveTo(cx - s * 0.55, cy - s * 0.72)
+        path.lineTo(cx + s * 0.22, cy - s * 0.72)
+        path.lineTo(cx + s * 0.55, cy - s * 0.39)
+        path.lineTo(cx + s * 0.55, cy + s * 0.72)
+        path.lineTo(cx - s * 0.55, cy + s * 0.72)
+        path.closeSubpath()
+        p.drawPath(path)
+        p.drawLine(QPointF(cx + s * 0.22, cy - s * 0.72),
+                   QPointF(cx + s * 0.22, cy - s * 0.39))
+        p.drawLine(QPointF(cx + s * 0.22, cy - s * 0.39),
+                   QPointF(cx + s * 0.55, cy - s * 0.39))
+        p.drawLine(QPointF(cx - s * 0.3, cy - s * 0.05),
+                   QPointF(cx + s * 0.3, cy - s * 0.05))
+        p.drawLine(QPointF(cx - s * 0.3, cy + s * 0.22),
+                   QPointF(cx + s * 0.3, cy + s * 0.22))
     elif name == "gear":
         # 八齿齿轮
         import math as _m
@@ -1664,7 +1691,10 @@ class TaskRow(QWidget):
         t = self.task
         self.name_lbl.setText(self._display_name())
         status = t.status
-        if status == TaskStatus.DOWNLOADING and t.total_size > 0:
+        if status == TaskStatus.DOWNLOADING and t.remark:
+            # 下载已结束、后处理进行中（转码/歌词/元数据）
+            meta = t.remark
+        elif status == TaskStatus.DOWNLOADING and t.total_size > 0:
             meta = (f"{t.progress_pct:.1f}% · {format_speed(t.speed_bps)} · "
                     f"{t.downloaded // (1024 * 1024)}MB / {t.total_size // (1024 * 1024)}MB")
         elif status == TaskStatus.DOWNLOADING:
@@ -2219,39 +2249,92 @@ class _Bus(QObject):
     detail_ready = pyqtSignal(object)  # (generation, uid)：音源详情已解析
     preview_ready = pyqtSignal(object)  # (url, title)
     preview_err = pyqtSignal(str)
+    task_created = pyqtSignal(object)   # 批量导入后台线程创建的 DownloadTask
+    log_line = pyqtSignal(str)          # 后台线程日志
+    batch_done = pyqtSignal(object)  # (入队数, 失败列表, 总数)
+    lyrics_ready = pyqtSignal(object)   # (generation, title, lrc_text|None)
 
 
 # ==================== 下载设置弹窗 ====================
 
 
-class SettingsDialog(QDialog):
-    """下载限速设置：单任务限速 + 全局限速（KB/s，0 = 不限速）。"""
+_CONVERT_LABELS = [
+    ("不转码（保留原始格式）", CONVERT_OFF),
+    ("自动转为 MP3", CONVERT_MP3),
+    ("自动转为 FLAC", CONVERT_FLAC),
+]
 
-    def __init__(self, parent: QWidget, pal, *,
-                 per_task_kb: int, global_kb: int) -> None:
+
+class SettingsDialog(QDialog):
+    """下载设置：限速 + 转码 + 元数据/歌词。"""
+
+    def __init__(self, parent: QWidget, pal, *, cfg: dict) -> None:
         super().__init__(parent)
         self.setWindowTitle("下载设置")
         self.setModal(True)
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(380)
         self._pal = pal
-        self._build(per_task_kb, global_kb)
+        self._build(cfg)
         self._apply_qss()
 
-    def _build(self, per_task_kb: int, global_kb: int) -> None:
+    def _build(self, cfg: dict) -> None:
         lay = QVBoxLayout(self)
         lay.setContentsMargins(22, 20, 22, 18)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
 
-        title = QLabel("下载速度限制", self)
-        title.setFont(qt_font(14, bold=True))
-        lay.addWidget(title)
-        hint = QLabel("单位 KB/s，填 0 表示不限速；全局限速对所有下载任务总和生效。", self)
-        hint.setWordWrap(True)
-        hint.setFont(qt_font(10))
-        lay.addWidget(hint)
+        # ---- 限速 ----
+        lay.addWidget(self._section_title("下载速度限制"))
+        self.per_spin = self._spin_row(
+            lay, "单任务限速", int(cfg.get("per_task_speed", 0) or 0))
+        self.global_spin = self._spin_row(
+            lay, "全局总限速", int(cfg.get("global_speed", 0) or 0))
 
-        self.per_spin = self._spin_row(lay, "单任务限速", per_task_kb)
-        self.global_spin = self._spin_row(lay, "全局总限速", global_kb)
+        lay.addWidget(self._hline())
+
+        # ---- 转码 ----
+        lay.addWidget(self._section_title("音频格式转换（下载完成后自动执行）"))
+        convert_mode = str(cfg.get("convert_mode", CONVERT_OFF) or CONVERT_OFF)
+        self.convert_combo = QComboBox(self)
+        for label, value in _CONVERT_LABELS:
+            self.convert_combo.addItem(label, value)
+        idx = max(0, self.convert_combo.findData(convert_mode))
+        self.convert_combo.setCurrentIndex(idx)
+        self.convert_combo.currentIndexChanged.connect(self._sync_bitrate_enabled)
+        self._combo_row(lay, "转码格式", self.convert_combo)
+
+        self.bitrate_combo = QComboBox(self)
+        for br in MP3_BITRATES:
+            self.bitrate_combo.addItem(f"{br} kbps", br)
+        cur_br = int(cfg.get("mp3_bitrate", 320) or 320)
+        self.bitrate_combo.setCurrentIndex(max(0, self.bitrate_combo.findData(cur_br)))
+        self._combo_row(lay, "MP3 码率", self.bitrate_combo)
+        self._sync_bitrate_enabled()
+
+        ffmpeg_ok = ffmpeg_available()
+        ff_hint = QLabel(
+            "已检测到 ffmpeg，转码功能可用。" if ffmpeg_ok
+            else "⚠ 未检测到 ffmpeg，转码将被跳过（可执行 brew install ffmpeg 安装）。",
+            self,
+        )
+        ff_hint.setWordWrap(True)
+        ff_hint.setFont(qt_font(9))
+        lay.addWidget(ff_hint)
+
+        lay.addWidget(self._hline())
+
+        # ---- 元数据 / 歌词 ----
+        lay.addWidget(self._section_title("元数据与歌词"))
+        self.tags_chk = self._check_row(
+            lay, "自动写入歌曲信息（歌名/歌手/专辑/年份）",
+            bool(cfg.get("write_tags", True)))
+        self.cover_chk = self._check_row(
+            lay, "内嵌专辑封面到音频文件", bool(cfg.get("embed_cover", True)))
+        self.lrc_chk = self._check_row(
+            lay, "同步下载歌词并保存同名 .lrc 文件",
+            bool(cfg.get("save_lrc", True)))
+        self.embed_lrc_chk = self._check_row(
+            lay, "歌词内嵌到音频标签（ID3 USLT / FLAC LYRICS）",
+            bool(cfg.get("embed_lyrics", True)))
 
         row = QHBoxLayout()
         row.addStretch(1)
@@ -2264,6 +2347,20 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         row.addWidget(buttons)
         lay.addLayout(row)
+
+    def _section_title(self, text: str) -> QLabel:
+        lbl = QLabel(text, self)
+        lbl.setFont(qt_font(12, bold=True))
+        return lbl
+
+    def _hline(self) -> QFrame:
+        div = QFrame(self)
+        div.setFixedHeight(1)
+        return div
+
+    def _sync_bitrate_enabled(self) -> None:
+        self.bitrate_combo.setEnabled(
+            self.convert_combo.currentData() == CONVERT_MP3)
 
     def _spin_row(self, parent_lay: QVBoxLayout, label: str, value: int) -> QSpinBox:
         row = QHBoxLayout()
@@ -2283,19 +2380,149 @@ class SettingsDialog(QDialog):
         parent_lay.addLayout(row)
         return spin
 
+    def _combo_row(self, parent_lay: QVBoxLayout,
+                   label: str, combo: QComboBox) -> None:
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        lbl = QLabel(label, self)
+        lbl.setFont(qt_font(11))
+        combo.setMinimumWidth(220)
+        row.addWidget(lbl)
+        row.addStretch(1)
+        row.addWidget(combo)
+        parent_lay.addLayout(row)
+
+    def _check_row(self, parent_lay: QVBoxLayout,
+                   label: str, checked: bool) -> QCheckBox:
+        chk = QCheckBox(label, self)
+        chk.setChecked(checked)
+        chk.setFont(qt_font(11))
+        parent_lay.addWidget(chk)
+        return chk
+
+    def _apply_qss(self) -> None:
+        pal = self._pal
+        surface = pal.surface if hasattr(pal, "surface") else pal.card
+        self.setStyleSheet(
+            f"QDialog {{ background: {pal.card}; }}"
+            f"QLabel {{ color: {pal.text}; background: transparent; }}"
+            f"QSpinBox, QComboBox {{ color: {pal.text}; background: {surface};"
+            f" border: 1px solid {pal.divider}; border-radius: 8px;"
+            f" padding: 4px 8px; font-size: 12px; }}"
+            "QSpinBox::up-button, QSpinBox::down-button { width: 18px; }"
+            "QComboBox QAbstractItemView {"
+            f" background: {surface}; color: {pal.text};"
+            f" selection-background-color: {pal.accent_soft if hasattr(pal, 'accent_soft') else '#3a7bd5'};"
+            "}"
+            f"QCheckBox {{ color: {pal.text}; spacing: 8px; }}"
+            "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;"
+            f" border: 1px solid {pal.divider}; background: {surface}; }}"
+            "QCheckBox::indicator:checked {"
+            f" background: {getattr(pal, 'accent', '#0A84FF')}; border-color: transparent; }}"
+        )
+
+    def values(self) -> dict:
+        return {
+            "per_task_speed": self.per_spin.value(),
+            "global_speed": self.global_spin.value(),
+            "convert_mode": self.convert_combo.currentData() or CONVERT_OFF,
+            "mp3_bitrate": int(self.bitrate_combo.currentData() or 320),
+            "write_tags": self.tags_chk.isChecked(),
+            "embed_cover": self.cover_chk.isChecked(),
+            "save_lrc": self.lrc_chk.isChecked(),
+            "embed_lyrics": self.embed_lrc_chk.isChecked(),
+        }
+
+
+# ==================== 歌词预览弹窗 ====================
+
+
+class LyricsDialog(QDialog):
+    """歌词预览：原始 LRC / 纯文本两种视图切换。"""
+
+    def __init__(self, parent: QWidget, pal, *, title: str,
+                 lrc: str, busy: bool = False) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"歌词预览 · {title}")
+        self.setModal(True)
+        self.resize(460, 560)
+        self._pal = pal
+        self._lrc = lrc or ""
+        self._plain = False
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
+
+        head = QHBoxLayout()
+        name_lbl = QLabel(title, self)
+        name_lbl.setFont(qt_font(13, bold=True))
+        head.addWidget(name_lbl)
+        head.addStretch(1)
+        self.toggle_btn = QCheckBox("纯文本", self)
+        self.toggle_btn.toggled.connect(self._on_toggle)
+        head.addWidget(self.toggle_btn)
+        lay.addLayout(head)
+
+        self.view = QPlainTextEdit(self)
+        self.view.setReadOnly(True)
+        mono = QFont(MONO_FONT, 10)
+        self.view.setFont(mono)
+        lay.addWidget(self.view, 1)
+
+        row = QHBoxLayout()
+        self.hint_lbl = QLabel("", self)
+        self.hint_lbl.setFont(qt_font(9))
+        row.addWidget(self.hint_lbl)
+        row.addStretch(1)
+        from PyQt6.QtWidgets import QDialogButtonBox
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Close, parent=self)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.accept)
+        row.addWidget(buttons)
+        lay.addLayout(row)
+
+        if busy:
+            self.view.setPlainText("正在搜索歌词…")
+        elif not self._lrc:
+            self.view.setPlainText("未找到该歌曲的歌词。")
+        else:
+            self._render()
+        self._apply_qss()
+
+    def set_lyrics(self, lrc: str | None) -> None:
+        self._lrc = lrc or ""
+        if not self._lrc:
+            self.view.setPlainText("未找到该歌曲的歌词。")
+            self.hint_lbl.setText("")
+            return
+        self._render()
+
+    def _on_toggle(self, plain: bool) -> None:
+        self._plain = plain
+        self._render()
+
+    def _render(self) -> None:
+        if not self._lrc:
+            return
+        text = strip_lrc_timestamps(self._lrc) if self._plain else self._lrc
+        self.view.setPlainText(text)
+        lines = text.count("\n") + 1
+        self.hint_lbl.setText(f"共 {lines} 行")
+
     def _apply_qss(self) -> None:
         pal = self._pal
         self.setStyleSheet(
             f"QDialog {{ background: {pal.card}; }}"
             f"QLabel {{ color: {pal.text}; background: transparent; }}"
-            f"QSpinBox {{ color: {pal.text}; background: {pal.surface if hasattr(pal, 'surface') else pal.card};"
-            f" border: 1px solid {pal.divider}; border-radius: 8px;"
-            f" padding: 4px 8px; font-size: 12px; }}"
-            "QSpinBox::up-button, QSpinBox::down-button { width: 18px; }"
+            f"QPlainTextEdit {{ color: {pal.text};"
+            f" background: {pal.surface if hasattr(pal, 'surface') else pal.card};"
+            f" border: 1px solid {pal.divider}; border-radius: 10px;"
+            " padding: 10px; }"
+            f"QCheckBox {{ color: {pal.text}; spacing: 8px; }}"
         )
-
-    def values(self) -> tuple[int, int]:
-        return self.per_spin.value(), self.global_spin.value()
 
 
 # ==================== 内置试听播放器 ====================
@@ -2371,13 +2598,21 @@ class MainWindow(QMainWindow):
 
         # 限速设置（KB/s，0 = 不限速）与全局限流器（跨队列共享）
         saved_cfg = load_settings()
+        self._settings_cfg: dict[str, Any] = dict(saved_cfg)
         self.per_task_speed: int = int(saved_cfg.get("per_task_speed", 0) or 0)
         self.global_speed: int = int(saved_cfg.get("global_speed", 0) or 0)
         self._global_limiter = RateLimiter(self.global_speed * 1024)
+        # 下载后处理选项（转码 / 歌词 / 元数据）
+        self._post_options = PostOptions.from_config(self._settings_cfg)
 
         # 音源详情后台预取（音质/版本识别），generation 用于作废过期结果
         self._detail_gen = 0
         self._last_keyword = ""
+
+        # 歌词预览 / 批量导入
+        self._lyrics_gen = 0
+        self._lyrics_win: Optional[LyricsDialog] = None
+        self._batch_running = False
 
         # 内置试听
         self.player = PreviewPlayer()
@@ -2397,6 +2632,10 @@ class MainWindow(QMainWindow):
         self.bus.detail_ready.connect(self._on_detail_ready)
         self.bus.preview_ready.connect(self._on_preview_ready)
         self.bus.preview_err.connect(self._on_preview_err)
+        self.bus.task_created.connect(self._on_task_created)
+        self.bus.log_line.connect(self._log)
+        self.bus.batch_done.connect(self._on_batch_done)
+        self.bus.lyrics_ready.connect(self._on_lyrics_ready)
         self.player.state_changed.connect(self._on_player_state)
         self.player.position_changed.connect(self._on_player_position)
         self.player.duration_changed.connect(self._on_player_duration)
@@ -2572,25 +2811,35 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(8)
         self.preview_btn = GlassButton("试听", kind="tinted", glyph="play",
-                                       width=96, command=self._on_preview_selected)
+                                       width=84, command=self._on_preview_selected)
+        self.lyrics_btn = GlassButton("歌词", kind="ghost", glyph="note",
+                                      width=84, command=self._on_lyrics_selected)
         self.download_sel_btn = GlassButton("下载选中", kind="accent",
-                                            glyph="download", width=124,
+                                            glyph="download", width=116,
                                             command=self._on_download_selected)
         self.download_all_btn = GlassButton("全部下载", kind="tinted", glyph="download",
-                                            width=124, command=self._on_download_all)
+                                            width=116, command=self._on_download_all)
+        self.import_btn = GlassButton("导入歌单", kind="ghost", glyph="list",
+                                      width=104, command=self._on_import_playlist)
+        self.export_btn = GlassButton("导出CSV", kind="ghost", glyph="doc",
+                                      width=96, command=self._on_export_csv)
         self.open_dir_btn = GlassButton("打开目录", kind="ghost", glyph="folder",
                                         command=self._open_download_dir)
         self.clear_results_btn = GlassButton("清空结果", kind="ghost", glyph="trash",
                                              command=self._clear_results)
-        for b in (self.preview_btn, self.download_sel_btn, self.download_all_btn,
+        for b in (self.preview_btn, self.lyrics_btn, self.download_sel_btn,
+                  self.download_all_btn, self.import_btn, self.export_btn,
                   self.open_dir_btn, self.clear_results_btn):
             row.addWidget(b)
         row.addStretch(1)
         root.addLayout(row)
         self.preview_btn.setEnabled(False)
+        self.lyrics_btn.setEnabled(False)
         self.download_sel_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
-        self._themed += [self.preview_btn, self.download_sel_btn, self.download_all_btn,
+        self.export_btn.setEnabled(False)
+        self._themed += [self.preview_btn, self.lyrics_btn, self.download_sel_btn,
+                         self.download_all_btn, self.import_btn, self.export_btn,
                          self.open_dir_btn, self.clear_results_btn]
 
     def _build_tasks(self, root: QVBoxLayout) -> None:
@@ -2764,8 +3013,10 @@ class MainWindow(QMainWindow):
         self.artist_filter.set_values(["全部"] + sorted({s[1] for s in demo_songs}))
         self.source_filter.set_values(["全部"] + list(PLATFORM_NAMES))
         self.preview_btn.setEnabled(True)
+        self.lyrics_btn.setEnabled(True)
         self.download_sel_btn.setEnabled(True)
         self.download_all_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
 
         demo_tasks = [
             ("晴天", "周杰伦", "咪咕音乐", "320K",
@@ -2945,8 +3196,10 @@ class MainWindow(QMainWindow):
         self.filtered_results = []
         self.count_lbl.setText("")
         self.preview_btn.setEnabled(False)
+        self.lyrics_btn.setEnabled(False)
         self.download_sel_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
         self._set_status("准备就绪", "info")
 
     # ---------- 搜索 ----------
@@ -2982,8 +3235,10 @@ class MainWindow(QMainWindow):
             self._update_filter_options()
             self._set_status(f"找到 {len(results)} 首歌曲", "ok")
             self.preview_btn.setEnabled(True)
+            self.lyrics_btn.setEnabled(True)
             self.download_sel_btn.setEnabled(True)
             self.download_all_btn.setEnabled(True)
+            self.export_btn.setEnabled(True)
             self._log(f"搜索完成: 共 {len(results)} 首歌曲（四平台交错排列）")
             # 后台并发预取音源详情（音质/版本），完成后逐条刷新，不阻塞列表
             self._start_detail_prefetch(results)
@@ -2994,8 +3249,10 @@ class MainWindow(QMainWindow):
             self.tree.clear()
             self.count_lbl.setText("")
             self.preview_btn.setEnabled(False)
+            self.lyrics_btn.setEnabled(False)
             self.download_sel_btn.setEnabled(False)
             self.download_all_btn.setEnabled(False)
+            self.export_btn.setEnabled(False)
             self.artist_filter.set("全部")
             self.source_filter.set("全部")
             self.quality_filter.set(QUALITY_FILTER_ALL)
@@ -3121,12 +3378,14 @@ class MainWindow(QMainWindow):
             return
         self._add_songs_to_queue(list(self.filtered_results))
 
-    def _add_songs_to_queue(self, songs: list[dict[str, Any]]) -> None:
+    def _ensure_queue(self) -> DownloadQueue:
+        """获取或创建下载队列（含限速、全局限流器、后处理配置）。"""
         if self._queue is None:
             self._queue = DownloadQueue(
                 directory=self.download_dir,
                 per_task_limit=self.per_task_speed * 1024,
                 global_limiter=self._global_limiter,
+                post_options=self._post_options,
             )
             self._queue.on_progress = self._on_queue_progress
             self._queue.on_status_change = self._on_queue_status_change
@@ -3134,7 +3393,33 @@ class MainWindow(QMainWindow):
         else:
             self._queue.set_limits(self.per_task_speed * 1024,
                                    self.global_speed * 1024)
+            self._queue.set_post_options(self._post_options)
         self._queue.directory = ensure_download_dir(self.download_dir)
+        return self._queue
+
+    @staticmethod
+    def _build_song_meta(song: dict[str, Any], title: str,
+                         artist: str, detail: dict[str, Any] | None) -> dict[str, Any]:
+        """从搜索项/详情组装后处理元数据（专辑/年份/封面/歌词身份）。"""
+        def pick(key: str) -> Any:
+            if detail and detail.get(key):
+                return detail[key]
+            return song.get(key)
+        return {
+            "title": title,
+            "artist": artist,
+            "album": str(pick("album") or ""),
+            "year": str(pick("year") or ""),
+            "cover_url": str(pick("cover") or ""),
+            "lrc_url": str(pick("lrc_url") or ""),
+            "source": song.get("source", ""),
+            "song_id": song.get("song_id"),
+            "rid": song.get("rid"),
+            "song_mid": song.get("song_mid"),
+        }
+
+    def _add_songs_to_queue(self, songs: list[dict[str, Any]]) -> None:
+        queue = self._ensure_queue()
 
         added = 0
         for song in songs:
@@ -3165,9 +3450,10 @@ class MainWindow(QMainWindow):
                 continue
             if tag == "variant":
                 self._log(f"提示：变体版本（{marker}）: {artist} - {title}")
-            task = self._queue.add_task(
+            meta = self._build_song_meta(song, title, artist, detail)
+            task = queue.add_task(
                 title=title, artist=artist, audio_url=audio_url,
-                quality=quality, source=source,
+                quality=quality, source=source, meta=meta,
             )
             self._add_task_row(task)
             added += 1
@@ -3179,7 +3465,7 @@ class MainWindow(QMainWindow):
         self._update_queue_buttons()
         if not self._queue_running:
             self._queue_running = True
-            self._queue.start_async()
+            queue.start_async()
 
     # ---------- 任务面板 ----------
 
@@ -3266,7 +3552,8 @@ class MainWindow(QMainWindow):
             1 for t in self._queue.tasks
             if t.status.value in ("pending", "fetching", "downloading", "paused")
         )
-        if active == 0 and self._queue_running:
+        if active == 0 and self._queue_running and not self._batch_running:
+            # 批量导入期间队列可能空闲等待后续入队，不算完成
             self._queue_running = False
             self._log("下载队列全部完成")
             self._set_status("下载队列全部完成", "ok")
@@ -3352,26 +3639,35 @@ class MainWindow(QMainWindow):
     # ---------- 下载设置（限速） ----------
 
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self, self.theme.palette,
-                             per_task_kb=self.per_task_speed,
-                             global_kb=self.global_speed)
+        dlg = SettingsDialog(self, self.theme.palette, cfg=self._settings_cfg)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        per_kb, global_kb = dlg.values()
+        values = dlg.values()
+        per_kb = values["per_task_speed"]
+        global_kb = values["global_speed"]
         self.per_task_speed = per_kb
         self.global_speed = global_kb
+        self._settings_cfg.update(values)
+        # 后处理选项立即重建并同步到队列（后续任务生效）
+        self._post_options = PostOptions.from_config(self._settings_cfg)
         # 全局限流器为共享实例，set_rate 立即生效；队列单任务限速同步更新
         self._global_limiter.set_rate(global_kb * 1024)
         if self._queue is not None:
             self._queue.set_limits(per_kb * 1024, global_kb * 1024)
+            self._queue.set_post_options(self._post_options)
         save_settings({
             "download_dir": self.download_dir,
-            "per_task_speed": per_kb,
-            "global_speed": global_kb,
+            **values,
         })
         per_txt = "不限速" if per_kb == 0 else f"{per_kb} KB/s"
         global_txt = "不限速" if global_kb == 0 else f"{global_kb} KB/s"
-        self._log(f"限速已更新：单任务 {per_txt}，全局 {global_txt}")
+        conv_txt = {"off": "不转码", "mp3": "转 MP3", "flac": "转 FLAC"}.get(
+            values["convert_mode"], "不转码")
+        self._log(
+            f"设置已保存：单任务 {per_txt}，全局 {global_txt}，"
+            f"格式 {conv_txt}"
+            + (f" {values['mp3_bitrate']}kbps" if values["convert_mode"] == "mp3" else "")
+        )
         self._set_status("下载设置已保存", "ok")
 
     def _refresh_speeds(self) -> None:
@@ -3504,6 +3800,272 @@ class MainWindow(QMainWindow):
             return "0:00"
         s = int(ms // 1000)
         return f"{s // 60}:{s % 60:02d}"
+
+    # ---------- 歌词预览 ----------
+
+    def _on_lyrics_selected(self) -> None:
+        items = self.tree.selectedItems()
+        if not items:
+            QMessageBox.warning(self, "提示", "请先选择一首歌曲查看歌词")
+            return
+        uid = items[0].data(0, Qt.ItemDataRole.UserRole)
+        songs = self._songs_by_uids({uid})
+        if not songs:
+            return
+        song = songs[0]
+        title = song.get("title", "") or song.get("name", "")
+        artist = song.get("artist", "") or song.get("singer", "")
+        name = f"{artist} - {title}"
+        self._lyrics_gen += 1
+        gen = self._lyrics_gen
+        self._lyrics_win = LyricsDialog(
+            self, self.theme.palette, title=name, lrc="", busy=True)
+        self._set_status(f"正在搜索歌词: {name}", "busy")
+        threading.Thread(target=self._lyrics_worker, args=(song, title, artist, gen),
+                         daemon=True).start()
+        self._lyrics_win.show()
+
+    def _lyrics_worker(self, song: dict[str, Any], title: str,
+                       artist: str, gen: int) -> None:
+        try:
+            detail = None
+            if not song.get("lrc_url"):
+                # 详情可补出平台直出歌词链接（失败不影响后续兜底检索）
+                detail = resolve_song(song)
+            meta = self._build_song_meta(song, title, artist, detail)
+            lrc = fetch_lyrics(meta)
+        except Exception:  # noqa: BLE001
+            lrc = None
+        self.bus.lyrics_ready.emit((gen, f"{artist} - {title}", lrc))
+
+    def _on_lyrics_ready(self, payload: object) -> None:
+        gen, name, lrc = payload
+        if gen != self._lyrics_gen:
+            return
+        win = self._lyrics_win
+        if win is None:
+            return
+        win.set_lyrics(lrc)
+        if lrc:
+            self._log(f"歌词已加载: {name}")
+            self._set_status("歌词已加载", "ok")
+        else:
+            self._log(f"未找到歌词: {name}")
+            self._set_status("未找到该歌曲歌词", "warn")
+
+    # ---------- 歌单导入 / CSV 导出 ----------
+
+    _PLAYLIST_DELIMS = (" - ", " — ", " – ", "\t", ",", "，", "、")
+
+    @classmethod
+    def _parse_playlist_file(cls, path: str) -> list[tuple[str, str]]:
+        """解析歌单文件：txt 一行一首（可用 - , ，制表符分隔歌名与歌手）；
+        csv 支持表头（歌曲/歌名、歌手/艺人），或按 歌名,歌手 两列。"""
+        entries: list[tuple[str, str]] = []
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            if path.lower().endswith(".csv"):
+                reader = list(csv.reader(f))
+                if not reader:
+                    return []
+                header = [c.strip() for c in reader[0]]
+                title_idx = artist_idx = -1
+                for i, c in enumerate(header):
+                    if title_idx < 0 and c in ("歌曲", "歌名", "曲目", "title", "name"):
+                        title_idx = i
+                    if artist_idx < 0 and c in ("歌手", "艺人", "艺术家", "artist"):
+                        artist_idx = i
+                rows = reader[1:] if (title_idx >= 0 or artist_idx >= 0) else reader
+                if title_idx < 0:
+                    title_idx = 0
+                if artist_idx < 0:
+                    artist_idx = 1
+                for row in rows:
+                    if not row:
+                        continue
+                    t = row[title_idx].strip() if title_idx < len(row) else ""
+                    a = row[artist_idx].strip() if 0 <= artist_idx < len(row) else ""
+                    if t:
+                        entries.append((t, a))
+            else:
+                for raw in f:
+                    line = raw.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    title, artist = line, ""
+                    for delim in cls._PLAYLIST_DELIMS:
+                        if delim in line:
+                            left, right = line.split(delim, 1)
+                            title, artist = left.strip(), right.strip()
+                            break
+                    entries.append((title, artist))
+        return entries
+
+    @staticmethod
+    def _pick_best_song(results: list[dict[str, Any]],
+                        title: str, artist: str) -> Optional[dict[str, Any]]:
+        """从搜索结果中挑最佳匹配：歌名/歌手相似度打分，排除伴奏等错误版本。"""
+        def norm(s: Any) -> str:
+            return "".join(str(s or "").split()).lower()
+
+        nt, na = norm(title), norm(artist)
+        best: Optional[dict[str, Any]] = None
+        best_score = -1
+        fallback: Optional[dict[str, Any]] = None
+        for cand in results:
+            ct = norm(cand.get("title") or cand.get("name"))
+            ca = norm(cand.get("artist") or cand.get("singer"))
+            if not ct:
+                continue
+            level, _m = detect_version_risk(cand.get("title", ""), title)
+            if level == "bad":
+                continue
+            fallback = fallback or cand
+            score = 0
+            if nt and (nt == ct or ct == nt):
+                score += 3
+            elif nt and (nt in ct or ct in nt):
+                score += 1
+            if na:
+                if na == ca:
+                    score += 3
+                elif na in ca or ca in na:
+                    score += 1
+            if level == "variant":
+                score -= 1
+            if score > best_score:
+                best_score = score
+                best = cand
+        return best or fallback
+
+    def _on_import_playlist(self) -> None:
+        if self._batch_running:
+            QMessageBox.information(self, "提示", "上一个歌单仍在导入中，请稍候")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入歌单（txt / csv）", "",
+            "歌单文件 (*.txt *.csv);;所有文件 (*)")
+        if not path:
+            return
+        try:
+            entries = self._parse_playlist_file(path)
+        except OSError as e:
+            QMessageBox.warning(self, "导入失败", f"无法读取文件：\n{e}")
+            return
+        if not entries:
+            QMessageBox.warning(self, "导入失败", "文件中没有解析到任何歌曲。")
+            return
+        ret = QMessageBox.question(
+            self, "批量下载",
+            f"共解析到 {len(entries)} 首歌曲，将自动搜索最佳音源并加入下载队列。\n"
+            "是否开始？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        queue = self._ensure_queue()
+        self._batch_running = True
+        self.import_btn.setEnabled(False)
+        self._set_status(f"批量导入进行中（0/{len(entries)}）…", "busy")
+        threading.Thread(target=self._batch_import_worker,
+                         args=(entries, queue), daemon=True).start()
+
+    def _batch_import_worker(self, entries: list[tuple[str, str]],
+                             queue: DownloadQueue) -> None:
+        """后台顺序搜索→解析→入队，温和访问免费接口（每首间隔 0.3s）。"""
+        total = len(entries)
+        enqueued = 0
+        failed: list[str] = []
+        for i, (title, artist) in enumerate(entries, 1):
+            kw = f"{title} {artist}".strip()
+            self.bus.log_line.emit(f"批量导入 [{i}/{total}] 搜索: {kw}")
+            song = None
+            detail = None
+            try:
+                results = search_all_platforms(kw)
+                song = self._pick_best_song(results, title, artist)
+                if song is not None:
+                    detail = resolve_song(song)
+            except Exception:  # noqa: BLE001
+                log_msg = f"批量导入 [{i}/{total}] 搜索失败: {kw}"
+                self.bus.log_line.emit(log_msg)
+            if not detail or not detail.get("audio_url"):
+                failed.append(kw)
+            elif detail.get("version_tag") == "bad":
+                failed.append(f"{kw}（仅找到伴奏版本）")
+            else:
+                d_title = detail.get("title", title)
+                d_artist = detail.get("artist", artist)
+                meta = self._build_song_meta(song or {}, d_title, d_artist, detail)
+                task = queue.add_task(
+                    title=d_title, artist=d_artist,
+                    audio_url=detail["audio_url"],
+                    quality=detail.get("quality", "?"),
+                    source=song.get("source_name", song.get("source", "?")) if song else "?",
+                    meta=meta,
+                )
+                self.bus.task_created.emit(task)
+                enqueued += 1
+            time.sleep(0.3)
+        self.bus.batch_done.emit((enqueued, failed, total))
+
+    def _on_task_created(self, task: DownloadTask) -> None:
+        """后台批量入队槽：补建任务行并确保队列运转。"""
+        if task.task_id not in self._task_rows:
+            self._add_task_row(task)
+        if not self._queue_running and self._queue is not None:
+            self._queue_running = True
+            self._queue.start_async()
+        self._update_queue_buttons()
+
+    def _on_batch_done(self, payload: object) -> None:
+        enqueued, failed, total = payload
+        self._batch_running = False
+        self.import_btn.setEnabled(True)
+        self._log(f"歌单导入完成：成功入队 {enqueued}/{total} 首")
+        for item in failed:
+            self._log(f"  跳过: {item}")
+        if enqueued:
+            self._set_status(f"批量下载已开始：{enqueued} 首入队", "ok")
+        else:
+            self._set_status("歌单导入完成：没有可下载的歌曲", "warn")
+        # 若最后一首在 batch_done 之前已完成，这里补做一次完成判定
+        self._check_queue_done()
+
+    def _on_export_csv(self) -> None:
+        songs = self.filtered_results or self.search_results
+        if not songs:
+            QMessageBox.information(self, "提示", "当前没有可导出的歌曲列表")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出当前列表为 CSV", "歌曲列表.csv", "CSV 文件 (*.csv)")
+        if not path:
+            return
+        try:
+            # utf-8-sig 让 Excel 直接打开不乱码
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["歌曲", "歌手", "平台", "音质", "版本"])
+                for song in songs:
+                    title = song.get("title", "") or song.get("name", "")
+                    artist = song.get("artist", "") or song.get("singer", "")
+                    source = song.get("source_name", song.get("source", "?"))
+                    tier = self._song_tier(song)
+                    tag, marker = self._version_of(song)
+                    if tag == "bad":
+                        version = f"伴奏/{marker or '未知'}"
+                    elif tag == "variant":
+                        version = marker or "变体"
+                    else:
+                        version = ""
+                    writer.writerow([
+                        title, artist, source, TIER_LABELS[tier], version,
+                    ])
+        except OSError as e:
+            QMessageBox.warning(self, "导出失败", f"写入文件失败：\n{e}")
+            return
+        self._log(f"已导出 {len(songs)} 首歌曲列表: {path}")
+        self._set_status(f"已导出 CSV（{len(songs)} 首）", "ok")
 
     # ---------- 主题菜单 / 打赏 ----------
 

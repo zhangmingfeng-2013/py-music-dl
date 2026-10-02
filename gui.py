@@ -60,6 +60,13 @@ DEFAULT_SETTINGS = {
     "scheme": "liquid", "theme_mode": "auto",
     # 下载限速（KB/s，0 = 不限速）
     "per_task_speed": 0, "global_speed": 0,
+    # 下载后处理
+    "convert_mode": "off",   # off / mp3 / flac
+    "mp3_bitrate": 320,      # 128 / 192 / 320
+    "write_tags": True,      # 写入标题/歌手/专辑/年份
+    "embed_cover": True,     # 内嵌专辑封面
+    "save_lrc": True,        # 同名 .lrc 文件
+    "embed_lyrics": True,    # 歌词内嵌到音频标签
 }
 
 # ---- 开发者打赏 ----
@@ -641,6 +648,19 @@ def load_settings() -> dict[str, Any]:
                         data[key] = max(0, val)
                     except (TypeError, ValueError):
                         pass
+                # 音频后处理设置
+                if saved.get("convert_mode") in ("off", "mp3", "flac"):
+                    data["convert_mode"] = saved["convert_mode"]
+                try:
+                    bitrate = int(saved.get("mp3_bitrate", 320))
+                    if bitrate in (128, 192, 320):
+                        data["mp3_bitrate"] = bitrate
+                except (TypeError, ValueError):
+                    pass
+                for key in ("write_tags", "embed_cover", "save_lrc",
+                            "embed_lyrics"):
+                    if isinstance(saved.get(key), bool):
+                        data[key] = saved[key]
     except Exception:
         pass
     return data

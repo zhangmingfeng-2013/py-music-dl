@@ -5,3 +5,5 @@ urllib3>=1.26.0
 pyqt6>=6.5.0
 pyglass>=0.1.0
 numpy>=1.26.0
+mutagen>=1.46.0
+# 音频转码需系统安装 ffmpeg（brew install ffmpeg / apt install ffmpeg）

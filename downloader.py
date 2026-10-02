@@ -130,6 +130,11 @@ class DownloadTask:
     # 实时速度（字节/秒，EWMA 平滑；非下载状态为 0）
     speed_bps: float = 0.0
 
+    # 后处理元数据：album/year/cover_url/lrc_url/lyrics 及平台身份字段
+    meta: dict = field(default_factory=dict)
+    # 后处理阶段提示（转码中/写入元数据…），供 UI 实时展示
+    remark: str = ""
+
     # 错误信息
     error: str = ""
 
@@ -202,17 +207,23 @@ class DownloadQueue:
     def __init__(self, directory: str = "downloaded_music",
                  max_retries: int = 2,
                  per_task_limit: int = 0,
-                 global_limiter: Optional["RateLimiter"] = None):
+                 global_limiter: Optional["RateLimiter"] = None,
+                 post_options: object = None):
         self.directory = ensure_download_dir(directory)
         self.max_retries = max_retries
         # 单任务限速（每个任务独立令牌桶）；0 = 不限速
         self.per_task_limit = max(0, int(per_task_limit))
         # 全局限速（队列内所有任务共享）；外部可传入同一个实例跨队列共享
         self.global_limiter = global_limiter
+        # 下载后处理选项（media.PostOptions）；None = 不做任何后处理
+        self.post_options = post_options
         self._tasks: list[DownloadTask] = []
         self._current_idx: int = -1
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        # 新增任务唤醒事件 + 最近入队时间：支持批量导入“先启动、边搜边入队”
+        self._wake_event = threading.Event()
+        self._last_add_ts = time.time()
 
         # 回调
         self.on_progress: ProgressCallback | None = None
@@ -243,6 +254,7 @@ class DownloadQueue:
 
     def add_task(self, *, title: str, artist: str, audio_url: str,
                  quality: str = "?", source: str = "",
+                 meta: dict | None = None,
                  task_id: str | None = None) -> DownloadTask:
         """添加一个下载任务到队列末尾"""
         if task_id is None:
@@ -257,9 +269,12 @@ class DownloadQueue:
             task_id=task_id, title=title, artist=artist, source=source,
             audio_url=audio_url, quality=quality,
             directory=self.directory, filepath=filepath,
+            meta=dict(meta or {}),
         )
         with self._lock:
             self._tasks.append(task)
+            self._last_add_ts = time.time()
+        self._wake_event.set()
         log.debug("添加任务: %s", task.display_name)
         self._notify_status(task)
         return task
@@ -324,6 +339,10 @@ class DownloadQueue:
         elif self.global_limiter is not None:
             self.global_limiter.set_rate(0)
 
+    def set_post_options(self, options: object) -> None:
+        """动态更新下载后处理选项（media.PostOptions）。"""
+        self.post_options = options
+
     @property
     def total_speed_bps(self) -> float:
         """当前所有下载中任务的实时速度之和。"""
@@ -336,12 +355,28 @@ class DownloadQueue:
     # ---- 内部 ----
 
     def _run(self) -> None:
-        """主循环：逐个处理队列中的任务"""
+        """主循环：逐个处理队列中的任务。
+
+        没有待办任务时最多空闲等待 20 秒（每 2 秒被新任务唤醒），
+        以支持批量导入边搜索边入队；超时无新任务则退出。
+        """
+        IDLE_TIMEOUT = 20.0
         while True:
             task = self._next_pending()
-            if task is None:
+            if task is not None:
+                self._process_task(task)
+                continue
+            self._wake_event.clear()
+            # clear 之后、wait 之前入队的任务不会丢失（事件已 set 立即返回）
+            if self._has_pending():
+                continue
+            if time.time() - self._last_add_ts > IDLE_TIMEOUT:
                 break
-            self._process_task(task)
+            self._wake_event.wait(timeout=2.0)
+
+    def _has_pending(self) -> bool:
+        with self._lock:
+            return any(t.status == TaskStatus.PENDING for t in self._tasks)
 
     def _next_pending(self) -> DownloadTask | None:
         with self._lock:
@@ -480,8 +515,14 @@ class DownloadQueue:
 
                             self._notify_progress(task)
 
-                task.status = TaskStatus.COMPLETED
                 task.speed_bps = 0.0
+
+                # 下载后处理：转码 / 歌词 / 元数据（失败不影响已下载文件）
+                if self.post_options is not None:
+                    self._run_post_process(task)
+
+                task.status = TaskStatus.COMPLETED
+                task.remark = ""
                 self._notify_status(task)
                 log.info("下载完成: %s → %s", task.display_name, task.filepath)
                 return
@@ -501,6 +542,19 @@ class DownloadQueue:
                 task.speed_bps = 0.0
                 self._notify_status(task)
                 return
+
+    def _run_post_process(self, task: DownloadTask) -> None:
+        """执行下载后处理管线（转码/歌词/标签），内部吞掉所有异常。"""
+        try:
+            from media import post_process
+            from api import fetch_lyrics
+            post_process(
+                task, self.post_options,
+                lyrics_fetcher=fetch_lyrics,
+                notify=self._notify_progress,
+            )
+        except Exception:
+            log.exception("后处理异常: %s", task.display_name)
 
     def _notify_progress(self, task: DownloadTask) -> None:
         if self.on_progress:
