@@ -30,7 +30,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import csv
 import os
 import subprocess
 import sys
@@ -321,30 +320,6 @@ def draw_icon(p: QPainter, name: str, cx: float, cy: float,
         p.setBrush(color)
         p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(QRectF(cx - s * 0.5, cy - s * 0.5, s, s), 2, 2)
-    elif name == "list":
-        # 播放列表：三条带圆点的横线
-        for i, dy in enumerate((-0.45, 0.0, 0.45)):
-            p.drawLine(QPointF(cx - s * 0.62, cy + s * dy),
-                       QPointF(cx + s * 0.7, cy + s * dy))
-            p.drawEllipse(QPointF(cx - s * 0.78, cy + s * dy), 1.6, 1.6)
-    elif name == "doc":
-        # 文档（导出 CSV 用）
-        path = QPainterPath()
-        path.moveTo(cx - s * 0.55, cy - s * 0.72)
-        path.lineTo(cx + s * 0.22, cy - s * 0.72)
-        path.lineTo(cx + s * 0.55, cy - s * 0.39)
-        path.lineTo(cx + s * 0.55, cy + s * 0.72)
-        path.lineTo(cx - s * 0.55, cy + s * 0.72)
-        path.closeSubpath()
-        p.drawPath(path)
-        p.drawLine(QPointF(cx + s * 0.22, cy - s * 0.72),
-                   QPointF(cx + s * 0.22, cy - s * 0.39))
-        p.drawLine(QPointF(cx + s * 0.22, cy - s * 0.39),
-                   QPointF(cx + s * 0.55, cy - s * 0.39))
-        p.drawLine(QPointF(cx - s * 0.3, cy - s * 0.05),
-                   QPointF(cx + s * 0.3, cy - s * 0.05))
-        p.drawLine(QPointF(cx - s * 0.3, cy + s * 0.22),
-                   QPointF(cx + s * 0.3, cy + s * 0.22))
     elif name == "gear":
         # 八齿齿轮
         import math as _m
@@ -2249,9 +2224,6 @@ class _Bus(QObject):
     detail_ready = pyqtSignal(object)  # (generation, uid)：音源详情已解析
     preview_ready = pyqtSignal(object)  # (url, title)
     preview_err = pyqtSignal(str)
-    task_created = pyqtSignal(object)   # 批量导入后台线程创建的 DownloadTask
-    log_line = pyqtSignal(str)          # 后台线程日志
-    batch_done = pyqtSignal(object)  # (入队数, 失败列表, 总数)
     lyrics_ready = pyqtSignal(object)   # (generation, title, lrc_text|None)
 
 
@@ -2609,10 +2581,9 @@ class MainWindow(QMainWindow):
         self._detail_gen = 0
         self._last_keyword = ""
 
-        # 歌词预览 / 批量导入
+        # 歌词预览
         self._lyrics_gen = 0
         self._lyrics_win: Optional[LyricsDialog] = None
-        self._batch_running = False
 
         # 内置试听
         self.player = PreviewPlayer()
@@ -2632,9 +2603,6 @@ class MainWindow(QMainWindow):
         self.bus.detail_ready.connect(self._on_detail_ready)
         self.bus.preview_ready.connect(self._on_preview_ready)
         self.bus.preview_err.connect(self._on_preview_err)
-        self.bus.task_created.connect(self._on_task_created)
-        self.bus.log_line.connect(self._log)
-        self.bus.batch_done.connect(self._on_batch_done)
         self.bus.lyrics_ready.connect(self._on_lyrics_ready)
         self.player.state_changed.connect(self._on_player_state)
         self.player.position_changed.connect(self._on_player_position)
@@ -2819,17 +2787,12 @@ class MainWindow(QMainWindow):
                                             command=self._on_download_selected)
         self.download_all_btn = GlassButton("全部下载", kind="tinted", glyph="download",
                                             width=116, command=self._on_download_all)
-        self.import_btn = GlassButton("导入歌单", kind="ghost", glyph="list",
-                                      width=104, command=self._on_import_playlist)
-        self.export_btn = GlassButton("导出CSV", kind="ghost", glyph="doc",
-                                      width=96, command=self._on_export_csv)
         self.open_dir_btn = GlassButton("打开目录", kind="ghost", glyph="folder",
                                         command=self._open_download_dir)
         self.clear_results_btn = GlassButton("清空结果", kind="ghost", glyph="trash",
                                              command=self._clear_results)
         for b in (self.preview_btn, self.lyrics_btn, self.download_sel_btn,
-                  self.download_all_btn, self.import_btn, self.export_btn,
-                  self.open_dir_btn, self.clear_results_btn):
+                  self.download_all_btn, self.open_dir_btn, self.clear_results_btn):
             row.addWidget(b)
         row.addStretch(1)
         root.addLayout(row)
@@ -2837,10 +2800,8 @@ class MainWindow(QMainWindow):
         self.lyrics_btn.setEnabled(False)
         self.download_sel_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
-        self.export_btn.setEnabled(False)
         self._themed += [self.preview_btn, self.lyrics_btn, self.download_sel_btn,
-                         self.download_all_btn, self.import_btn, self.export_btn,
-                         self.open_dir_btn, self.clear_results_btn]
+                         self.download_all_btn, self.open_dir_btn, self.clear_results_btn]
 
     def _build_tasks(self, root: QVBoxLayout) -> None:
         self.tasks_panel = GlassPanel(self.ambient, pad=(12, 10, 12, 10))
@@ -3016,7 +2977,6 @@ class MainWindow(QMainWindow):
         self.lyrics_btn.setEnabled(True)
         self.download_sel_btn.setEnabled(True)
         self.download_all_btn.setEnabled(True)
-        self.export_btn.setEnabled(True)
 
         demo_tasks = [
             ("晴天", "周杰伦", "咪咕音乐", "320K",
@@ -3199,7 +3159,6 @@ class MainWindow(QMainWindow):
         self.lyrics_btn.setEnabled(False)
         self.download_sel_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
-        self.export_btn.setEnabled(False)
         self._set_status("准备就绪", "info")
 
     # ---------- 搜索 ----------
@@ -3238,7 +3197,6 @@ class MainWindow(QMainWindow):
             self.lyrics_btn.setEnabled(True)
             self.download_sel_btn.setEnabled(True)
             self.download_all_btn.setEnabled(True)
-            self.export_btn.setEnabled(True)
             self._log(f"搜索完成: 共 {len(results)} 首歌曲（四平台交错排列）")
             # 后台并发预取音源详情（音质/版本），完成后逐条刷新，不阻塞列表
             self._start_detail_prefetch(results)
@@ -3252,7 +3210,6 @@ class MainWindow(QMainWindow):
             self.lyrics_btn.setEnabled(False)
             self.download_sel_btn.setEnabled(False)
             self.download_all_btn.setEnabled(False)
-            self.export_btn.setEnabled(False)
             self.artist_filter.set("全部")
             self.source_filter.set("全部")
             self.quality_filter.set(QUALITY_FILTER_ALL)
@@ -3552,8 +3509,7 @@ class MainWindow(QMainWindow):
             1 for t in self._queue.tasks
             if t.status.value in ("pending", "fetching", "downloading", "paused")
         )
-        if active == 0 and self._queue_running and not self._batch_running:
-            # 批量导入期间队列可能空闲等待后续入队，不算完成
+        if active == 0 and self._queue_running:
             self._queue_running = False
             self._log("下载队列全部完成")
             self._set_status("下载队列全部完成", "ok")
@@ -3853,219 +3809,6 @@ class MainWindow(QMainWindow):
             self._log(f"未找到歌词: {name}")
             self._set_status("未找到该歌曲歌词", "warn")
 
-    # ---------- 歌单导入 / CSV 导出 ----------
-
-    _PLAYLIST_DELIMS = (" - ", " — ", " – ", "\t", ",", "，", "、")
-
-    @classmethod
-    def _parse_playlist_file(cls, path: str) -> list[tuple[str, str]]:
-        """解析歌单文件：txt 一行一首（可用 - , ，制表符分隔歌名与歌手）；
-        csv 支持表头（歌曲/歌名、歌手/艺人），或按 歌名,歌手 两列。"""
-        entries: list[tuple[str, str]] = []
-        with open(path, "r", encoding="utf-8-sig", newline="") as f:
-            if path.lower().endswith(".csv"):
-                reader = list(csv.reader(f))
-                if not reader:
-                    return []
-                header = [c.strip() for c in reader[0]]
-                title_idx = artist_idx = -1
-                for i, c in enumerate(header):
-                    if title_idx < 0 and c in ("歌曲", "歌名", "曲目", "title", "name"):
-                        title_idx = i
-                    if artist_idx < 0 and c in ("歌手", "艺人", "艺术家", "artist"):
-                        artist_idx = i
-                rows = reader[1:] if (title_idx >= 0 or artist_idx >= 0) else reader
-                if title_idx < 0:
-                    title_idx = 0
-                if artist_idx < 0:
-                    artist_idx = 1
-                for row in rows:
-                    if not row:
-                        continue
-                    t = row[title_idx].strip() if title_idx < len(row) else ""
-                    a = row[artist_idx].strip() if 0 <= artist_idx < len(row) else ""
-                    if t:
-                        entries.append((t, a))
-            else:
-                for raw in f:
-                    line = raw.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    title, artist = line, ""
-                    for delim in cls._PLAYLIST_DELIMS:
-                        if delim in line:
-                            left, right = line.split(delim, 1)
-                            title, artist = left.strip(), right.strip()
-                            break
-                    entries.append((title, artist))
-        return entries
-
-    @staticmethod
-    def _pick_best_song(results: list[dict[str, Any]],
-                        title: str, artist: str) -> Optional[dict[str, Any]]:
-        """从搜索结果中挑最佳匹配：歌名/歌手相似度打分，排除伴奏等错误版本。"""
-        def norm(s: Any) -> str:
-            return "".join(str(s or "").split()).lower()
-
-        nt, na = norm(title), norm(artist)
-        best: Optional[dict[str, Any]] = None
-        best_score = -1
-        fallback: Optional[dict[str, Any]] = None
-        for cand in results:
-            ct = norm(cand.get("title") or cand.get("name"))
-            ca = norm(cand.get("artist") or cand.get("singer"))
-            if not ct:
-                continue
-            level, _m = detect_version_risk(cand.get("title", ""), title)
-            if level == "bad":
-                continue
-            fallback = fallback or cand
-            score = 0
-            if nt and (nt == ct or ct == nt):
-                score += 3
-            elif nt and (nt in ct or ct in nt):
-                score += 1
-            if na:
-                if na == ca:
-                    score += 3
-                elif na in ca or ca in na:
-                    score += 1
-            if level == "variant":
-                score -= 1
-            if score > best_score:
-                best_score = score
-                best = cand
-        return best or fallback
-
-    def _on_import_playlist(self) -> None:
-        if self._batch_running:
-            QMessageBox.information(self, "提示", "上一个歌单仍在导入中，请稍候")
-            return
-        path, _ = QFileDialog.getOpenFileName(
-            self, "导入歌单（txt / csv）", "",
-            "歌单文件 (*.txt *.csv);;所有文件 (*)")
-        if not path:
-            return
-        try:
-            entries = self._parse_playlist_file(path)
-        except OSError as e:
-            QMessageBox.warning(self, "导入失败", f"无法读取文件：\n{e}")
-            return
-        if not entries:
-            QMessageBox.warning(self, "导入失败", "文件中没有解析到任何歌曲。")
-            return
-        ret = QMessageBox.question(
-            self, "批量下载",
-            f"共解析到 {len(entries)} 首歌曲，将自动搜索最佳音源并加入下载队列。\n"
-            "是否开始？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if ret != QMessageBox.StandardButton.Yes:
-            return
-        queue = self._ensure_queue()
-        self._batch_running = True
-        self.import_btn.setEnabled(False)
-        self._set_status(f"批量导入进行中（0/{len(entries)}）…", "busy")
-        threading.Thread(target=self._batch_import_worker,
-                         args=(entries, queue), daemon=True).start()
-
-    def _batch_import_worker(self, entries: list[tuple[str, str]],
-                             queue: DownloadQueue) -> None:
-        """后台顺序搜索→解析→入队，温和访问免费接口（每首间隔 0.3s）。"""
-        total = len(entries)
-        enqueued = 0
-        failed: list[str] = []
-        for i, (title, artist) in enumerate(entries, 1):
-            kw = f"{title} {artist}".strip()
-            self.bus.log_line.emit(f"批量导入 [{i}/{total}] 搜索: {kw}")
-            song = None
-            detail = None
-            try:
-                results = search_all_platforms(kw)
-                song = self._pick_best_song(results, title, artist)
-                if song is not None:
-                    detail = resolve_song(song)
-            except Exception:  # noqa: BLE001
-                log_msg = f"批量导入 [{i}/{total}] 搜索失败: {kw}"
-                self.bus.log_line.emit(log_msg)
-            if not detail or not detail.get("audio_url"):
-                failed.append(kw)
-            elif detail.get("version_tag") == "bad":
-                failed.append(f"{kw}（仅找到伴奏版本）")
-            else:
-                d_title = detail.get("title", title)
-                d_artist = detail.get("artist", artist)
-                meta = self._build_song_meta(song or {}, d_title, d_artist, detail)
-                task = queue.add_task(
-                    title=d_title, artist=d_artist,
-                    audio_url=detail["audio_url"],
-                    quality=detail.get("quality", "?"),
-                    source=song.get("source_name", song.get("source", "?")) if song else "?",
-                    meta=meta,
-                )
-                self.bus.task_created.emit(task)
-                enqueued += 1
-            time.sleep(0.3)
-        self.bus.batch_done.emit((enqueued, failed, total))
-
-    def _on_task_created(self, task: DownloadTask) -> None:
-        """后台批量入队槽：补建任务行并确保队列运转。"""
-        if task.task_id not in self._task_rows:
-            self._add_task_row(task)
-        if not self._queue_running and self._queue is not None:
-            self._queue_running = True
-            self._queue.start_async()
-        self._update_queue_buttons()
-
-    def _on_batch_done(self, payload: object) -> None:
-        enqueued, failed, total = payload
-        self._batch_running = False
-        self.import_btn.setEnabled(True)
-        self._log(f"歌单导入完成：成功入队 {enqueued}/{total} 首")
-        for item in failed:
-            self._log(f"  跳过: {item}")
-        if enqueued:
-            self._set_status(f"批量下载已开始：{enqueued} 首入队", "ok")
-        else:
-            self._set_status("歌单导入完成：没有可下载的歌曲", "warn")
-        # 若最后一首在 batch_done 之前已完成，这里补做一次完成判定
-        self._check_queue_done()
-
-    def _on_export_csv(self) -> None:
-        songs = self.filtered_results or self.search_results
-        if not songs:
-            QMessageBox.information(self, "提示", "当前没有可导出的歌曲列表")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出当前列表为 CSV", "歌曲列表.csv", "CSV 文件 (*.csv)")
-        if not path:
-            return
-        try:
-            # utf-8-sig 让 Excel 直接打开不乱码
-            with open(path, "w", encoding="utf-8-sig", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["歌曲", "歌手", "平台", "音质", "版本"])
-                for song in songs:
-                    title = song.get("title", "") or song.get("name", "")
-                    artist = song.get("artist", "") or song.get("singer", "")
-                    source = song.get("source_name", song.get("source", "?"))
-                    tier = self._song_tier(song)
-                    tag, marker = self._version_of(song)
-                    if tag == "bad":
-                        version = f"伴奏/{marker or '未知'}"
-                    elif tag == "variant":
-                        version = marker or "变体"
-                    else:
-                        version = ""
-                    writer.writerow([
-                        title, artist, source, TIER_LABELS[tier], version,
-                    ])
-        except OSError as e:
-            QMessageBox.warning(self, "导出失败", f"写入文件失败：\n{e}")
-            return
-        self._log(f"已导出 {len(songs)} 首歌曲列表: {path}")
-        self._set_status(f"已导出 CSV（{len(songs)} 首）", "ok")
 
     # ---------- 主题菜单 / 打赏 ----------
 
