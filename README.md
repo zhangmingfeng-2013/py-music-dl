@@ -281,13 +281,16 @@ py-music-dl/
 - **项目主页**：[gitee.com/zhangmf9773/py-music-dl](https://gitee.com/zhangmf9773/py-music-dl)
 - **问题反馈**：[Gitee Issues](https://gitee.com/zhangmf9773/py-music-dl/issues)
 - **功能建议 / 合作**：欢迎通过 Gitee Issues 或 Pull Request 联系
+- **电话** ：[15123469773](tel:15123469773)
+- **邮箱** ：[503175021@qq.com](mailto:503175021@qq.com)
 
 ---
 
 ## ⚠️ 免责声明
 
-本项目仅供学习与研究交流使用，请勿用于商业用途。音乐作品的版权归各平台及权利方所有，下载内容请在 24 小时内自行删除；因使用本项目产生的任何问题由使用者自行承担。
+本项目仅供学习与研究交流使用，请勿用于商业用途。音乐作品的版权归各平台及权利方所有；因使用本项目产生的任何问题由使用者自行承担。
 
 <p align="center">
+  <sub>用心制作 ❤️ 仅用于学习用途</sub>
   <sub>Made with ❤️ for learning purposes</sub>
 </p>
