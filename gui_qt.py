@@ -46,8 +46,8 @@ from PyQt6.QtCore import (
     pyqtProperty, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter,
-    QPainterPath, QPalette, QPen, QPixmap, QRadialGradient,
+    QBrush, QColor, QFont, QFontMetrics, QIcon, QImage, QLinearGradient,
+    QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient,
 )
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtWidgets import (
@@ -77,7 +77,8 @@ from api import (  # noqa: E402
 from downloader import DownloadQueue, DownloadTask, RateLimiter, TaskStatus  # noqa: E402
 from media import CONVERT_FLAC, CONVERT_MP3, CONVERT_OFF, MP3_BITRATES, PostOptions, ffmpeg_available  # noqa: E402
 from utils import (  # noqa: E402
-    DEFAULT_DOWNLOAD_DIR, ensure_download_dir, format_speed, quality_tier,
+    DEFAULT_DOWNLOAD_DIR, default_download_dir, ensure_download_dir,
+    format_speed, quality_tier, resource_path,
     TIER_HQ, TIER_LABELS, TIER_LOSSLESS, TIER_ORDER, TIER_STANDARD,
     TIER_UNKNOWN,
 )
@@ -92,6 +93,19 @@ MAX_TASK_PANEL_HEIGHT = 4 * TASK_ROW_HEIGHT
 APP_TITLE = "音乐下载器"
 APP_VERSION = "v3.2 · Qt"
 APP_SUBTITLE = "多平台聚合 · 咪咕 网易云 QQ音乐 酷我"
+
+
+def app_icon() -> QIcon:
+    """应用图标（窗口标题栏/任务栏/Dock）。Windows 用多帧 ICO，其余平台用高清 PNG。"""
+    if sys.platform == "win32":
+        path = resource_path("assets", "icons", "app.ico")
+        if os.path.exists(path):
+            return QIcon(path)
+    path = resource_path("assets", "icons", "icon_512.png")
+    if not os.path.exists(path):
+        path = resource_path("assets", "icons", "icon_256.png")
+    return QIcon(path) if os.path.exists(path) else QIcon()
+
 
 # 音质筛选项（标签 → 最低 tier；"全部" 不过滤）
 QUALITY_FILTER_ALL = "全部"
@@ -2169,23 +2183,42 @@ def build_slider_qss(pal) -> str:
 
 
 class _HeaderIcon(QWidget):
-    """品牌图标：accent 圆角方块 + 音符。"""
+    """品牌图标：优先使用品牌图标 PNG，缺失时退回 accent 圆角方块 + 音符。"""
+
+    _brand_cache: Optional[QPixmap] = None
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setFixedSize(34, 34)
         self._pal = None
 
+    @classmethod
+    def _brand(cls) -> Optional[QPixmap]:
+        if cls._brand_cache is None:
+            pm = QPixmap(resource_path("assets", "icons", "icon_64.png"))
+            cls._brand_cache = (
+                pm.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+                if not pm.isNull() else QPixmap()
+            )
+        return cls._brand_cache if not cls._brand_cache.isNull() else None
+
     def apply_theme(self, pal) -> None:
         self._pal = pal
         self.update()
 
     def paintEvent(self, _e) -> None:  # noqa: N802
-        pal = self._pal
-        if pal is None:
-            return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        brand = self._brand()
+        if brand is not None:
+            p.drawPixmap(1, 1, brand)
+            p.end()
+            return
+        pal = self._pal
+        if pal is None:
+            p.end()
+            return
         path = QPainterPath()
         path.addRoundedRect(QRectF(1, 1, 32, 32), pal.radius_icon, pal.radius_icon)
         p.fillPath(path, qc(pal.accent))
@@ -2562,7 +2595,9 @@ class MainWindow(QMainWindow):
         self.tip_store = TipRecordStore()
         self._tip_win: Optional[TipDialogQ] = None
         self._tip_records_win: Optional[TipRecordsQ] = None
-        self.download_dir: str = ensure_download_dir(DEFAULT_DOWNLOAD_DIR)
+        self.download_dir: str = ensure_download_dir(
+            load_settings().get("download_dir") or default_download_dir()
+        )
         self._queue: Optional[DownloadQueue] = None
         self._task_rows: dict[str, TaskRow] = {}
         self._queue_running = False
@@ -3892,11 +3927,16 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName(APP_TITLE)
+    icon = app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)  # 所有窗口默认图标
     base = QFont(UI_FONT)
     base.setPixelSize(12)
     app.setFont(base)
 
     win = MainWindow(demo=demo)
+    if not icon.isNull():
+        win.setWindowIcon(icon)
     win.show()
     sys.exit(app.exec())
 

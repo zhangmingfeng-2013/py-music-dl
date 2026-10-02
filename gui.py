@@ -37,7 +37,10 @@ from typing import Any, Callable, Optional
 
 from api import PLATFORM_NAMES, search_all_platforms, get_song_detail
 from downloader import DownloadQueue, DownloadTask, TaskStatus
-from utils import ensure_download_dir, format_size, DEFAULT_DOWNLOAD_DIR
+from utils import (
+    ensure_download_dir, format_size, DEFAULT_DOWNLOAD_DIR,
+    resource_path, user_config_path,
+)
 
 # ---- 常量 ----
 
@@ -55,7 +58,7 @@ APP_TITLE = "音乐下载器"
 APP_VERSION = "v3.1"
 APP_SUBTITLE = "多平台聚合 · 咪咕 网易云 QQ音乐 酷我"
 
-SETTINGS_FILE = "settings.json"
+SETTINGS_FILE = user_config_path("settings.json")
 DEFAULT_SETTINGS = {
     "scheme": "liquid", "theme_mode": "auto",
     # 下载限速（KB/s，0 = 不限速）
@@ -70,11 +73,10 @@ DEFAULT_SETTINGS = {
 }
 
 # ---- 开发者打赏 ----
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-TIP_RECORDS_FILE = os.path.join(APP_DIR, "tip_records.json")
+TIP_RECORDS_FILE = user_config_path("tip_records.json")
 TIP_QR_FILES: dict[str, str] = {
-    "wechat": os.path.join(APP_DIR, "assets", "tip", "wechat.png"),
-    "alipay": os.path.join(APP_DIR, "assets", "tip", "alipay.png"),
+    "wechat": resource_path("assets", "tip", "wechat.png"),
+    "alipay": resource_path("assets", "tip", "alipay.png"),
 }
 TIP_METHODS: dict[str, str] = {"wechat": "微信支付", "alipay": "支付宝"}
 TIP_MAX_RECORDS = 500

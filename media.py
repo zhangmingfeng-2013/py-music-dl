@@ -24,13 +24,29 @@ from typing import Any, Callable, Optional
 import requests
 import urllib3
 
-from utils import log
+from utils import log, resource_path
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---- 常量 ----
 
-FFMPEG_BIN: str = shutil.which("ffmpeg") or "ffmpeg"
+def _resolve_ffmpeg() -> str:
+    """定位 ffmpeg：优先随安装包内置，其次系统 PATH。"""
+    exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    # PyInstaller --add-binary 的几种常见落点
+    candidates = (
+        resource_path("ffmpeg", "bin", exe),
+        resource_path("bin", exe),
+        resource_path("ffmpeg", exe),
+        resource_path(exe),
+    )
+    for c in candidates:
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return shutil.which("ffmpeg") or "ffmpeg"
+
+
+FFMPEG_BIN: str = _resolve_ffmpeg()
 FFPROBE_BIN: str = shutil.which("ffprobe") or "ffprobe"
 
 CONVERT_OFF = "off"

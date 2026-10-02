@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  音乐下载器 主图标（矢量源文件）
+  设计：液态玻璃品牌蓝渐变底板（#5AC8FA → #0A84FF → #5E5CE6），
+  白色“音符符尾 + 下载箭头”合体字形，保证 16px 下仍清晰可辨。
+  所有派生 PNG / ICO / ICNS 均由 assets/icons/gen_icons.py 渲染生成。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- 135° 品牌渐变 -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6AD2FA"/>
+      <stop offset="0.46" stop-color="#0A84FF"/>
+      <stop offset="1" stop-color="#5E5CE6"/>
+    </linearGradient>
+    <!-- 顶部液态高光 -->
+    <radialGradient id="gloss" cx="0.5" cy="0.16" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="plate">
+      <rect x="64" y="64" width="896" height="896" rx="224" ry="224"/>
+    </clipPath>
+  </defs>
+
+  <!-- 底板 -->
+  <rect x="64" y="64" width="896" height="896" rx="224" ry="224" fill="url(#bg)"/>
+  <g clip-path="url(#plate)">
+    <rect x="64" y="64" width="896" height="896" fill="url(#gloss)"/>
+    <!-- 底部加深，增强字形托底对比 -->
+    <rect x="64" y="560" width="896" height="400" fill="#0035C7" opacity="0.10"/>
+  </g>
+  <!-- 内描边高光 -->
+  <rect x="70" y="70" width="884" height="884" rx="218" ry="218"
+        fill="none" stroke="#FFFFFF" stroke-width="10" opacity="0.28"/>
+
+  <!-- 白色字形：音符竖杆 -->
+  <rect x="468" y="246" width="88" height="372" rx="44" fill="#FFFFFF"/>
+  <!-- 音符符尾（飘扬的旗帜曲线） -->
+  <path d="M512 276 C660 294 716 374 624 428"
+        fill="none" stroke="#FFFFFF" stroke-width="84"
+        stroke-linecap="round"/>
+  <!-- 下载箭头 -->
+  <path d="M376 596 L512 728 L648 596"
+        fill="none" stroke="#FFFFFF" stroke-width="92"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 下载托盘线（与箭头留出足够间距，保证小尺寸不粘连） -->
+  <line x1="376" y1="864" x2="648" y2="864"
+        stroke="#FFFFFF" stroke-width="72" stroke-linecap="round"/>
+</svg>

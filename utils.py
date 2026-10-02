@@ -34,6 +34,61 @@ log = setup_logger()
 
 DEFAULT_DOWNLOAD_DIR = "downloaded_music"
 
+
+def app_base_dir() -> str:
+    """程序资源根目录。
+
+    - 源码运行：项目根目录（utils.py 所在目录）
+    - PyInstaller 打包：
+      · onedir/macOS .app：可执行文件旁的资源目录（_MEIPASS 已被
+        PyInstaller 设为包内资源根，直接使用）
+      · onefile：运行时解压目录 sys._MEIPASS
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return str(meipass)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def resource_path(*parts: str) -> str:
+    """拼接随程序分发的只读资源路径（assets/、图标等）。"""
+    return os.path.join(app_base_dir(), *parts)
+
+
+def is_frozen() -> bool:
+    """是否运行于 PyInstaller 打包后的环境。"""
+    return bool(getattr(sys, "frozen", False))
+
+
+def user_config_dir() -> str:
+    """各平台标准的用户可写配置目录（打包后使用）：
+    Windows %APPDATA%/music-dl；macOS ~/Library/Application Support/music-dl；
+    Linux $XDG_CONFIG_HOME/music-dl 或 ~/.config/music-dl。
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    d = os.path.join(base, "music-dl")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def user_config_path(filename: str) -> str:
+    """用户可写配置文件路径。打包后放系统标准配置目录；源码运行保持当前目录。"""
+    if is_frozen():
+        return os.path.join(user_config_dir(), filename)
+    return filename
+
+
+def default_download_dir() -> str:
+    """默认下载目录。打包后固定到用户“下载/music-dl”，避免安装目录只读。"""
+    if is_frozen():
+        return os.path.join(os.path.expanduser("~"), "Downloads", "music-dl")
+    return DEFAULT_DOWNLOAD_DIR
+
 # ---- 文件名校验 ----
 
 _ILLEGAL_CHARS_RE = re.compile(r'[\\/*?:"<>|]')
