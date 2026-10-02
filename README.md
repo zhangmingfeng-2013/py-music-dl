@@ -292,5 +292,4 @@ py-music-dl/
 
 <p align="center">
   <sub>用心制作 ❤️ 仅用于学习用途</sub>
-  <sub>Made with ❤️ for learning purposes</sub>
 </p>
