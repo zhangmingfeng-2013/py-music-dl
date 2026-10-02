@@ -9,9 +9,6 @@ build/
 dist/
 installer/bin/
 assets/icons/app.iconset/
-search_history.json
-artist_history.json
-tip_records.json
 tip_records.json.bak
 tip_records.json.tmp
 LiquidGlassUI/.build
