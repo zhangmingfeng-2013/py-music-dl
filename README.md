@@ -280,7 +280,6 @@ py-music-dl/
 
 - **项目主页**：[gitee.com/zhangmf9773/py-music-dl](https://gitee.com/zhangmf9773/py-music-dl)
 - **问题反馈**：[Gitee Issues](https://gitee.com/zhangmf9773/py-music-dl/issues)
-- **功能建议 / 合作**：欢迎通过 Gitee Issues 或 Pull Request 联系
 - **电话** ：[15123469773](tel:15123469773)
 - **邮箱** ：[503175021@qq.com](mailto:503175021@qq.com)
 
