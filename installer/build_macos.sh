@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 音乐下载器 —— macOS .pkg 构建脚本
+# 拾音 —— macOS .pkg 构建脚本
 #
-# 产物：dist/MusicDownloader-<version>-macos-<arch>.pkg
+# 产物：dist/Shiyin-<version>-macos-<arch>.pkg
 # 流程：生成图标 → PyInstaller 冻结为 .app → pkgbuild 组件包
 #       → productbuild 标准安装引导 .pkg
 #
@@ -14,7 +14,8 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 VERSION="$(tr -d ' \n' < installer/VERSION)"
 ARCH="$(uname -m)"
-APP_NAME="MusicDownloader"
+APP_NAME="Shiyin"
+APP_DISPLAY_NAME="拾音"
 WORK="build/pkg"
 OUT="dist/${APP_NAME}-${VERSION}-macos-${ARCH}.pkg"
 
@@ -29,7 +30,18 @@ echo "==> [2/5] PyInstaller 冻结 .app"
 APP_BUNDLE="dist/${APP_NAME}.app"
 [ -d "$APP_BUNDLE" ] || { echo "未找到 $APP_BUNDLE" >&2; exit 1; }
 
-echo "==> [3/5] 清理扩展属性并临时签名（ad-hoc，保证 Gatekeeper 可启动）"
+echo "==> [3/5] 本地化显示名、清理扩展属性并临时签名（ad-hoc）"
+# Finder/启动台按当前语言显示中文应用名（与微信等应用同机制）
+RES_DIR="$APP_BUNDLE/Contents/Resources"
+mkdir -p "$RES_DIR/zh-Hans.lproj" "$RES_DIR/en.lproj"
+cat > "$RES_DIR/zh-Hans.lproj/InfoPlist.strings" <<EOF
+"CFBundleDisplayName" = "${APP_DISPLAY_NAME}";
+"CFBundleName" = "${APP_DISPLAY_NAME}";
+EOF
+cat > "$RES_DIR/en.lproj/InfoPlist.strings" <<EOF
+"CFBundleDisplayName" = "${APP_NAME}";
+"CFBundleName" = "${APP_NAME}";
+EOF
 xattr -cr "$APP_BUNDLE" || true
 codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || \
   echo "    ad-hoc 签名跳过（无需处理）"
@@ -37,10 +49,10 @@ codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || \
 echo "==> [4/5] 生成组件包（安装到 /Applications）"
 rm -rf "$WORK"
 mkdir -p "$WORK"
-COMP_PKG="$WORK/MusicDownloader-component.pkg"
+COMP_PKG="$WORK/Shiyin-component.pkg"
 pkgbuild --component "$APP_BUNDLE" \
          --install-location /Applications \
-         --identifier "com.musicdownloader.app" \
+         --identifier "com.shiyin.app" \
          --version "$VERSION" \
          "$COMP_PKG"
 

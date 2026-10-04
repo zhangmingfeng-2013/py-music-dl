@@ -102,7 +102,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
 
     print("═" * 52)
-    print("           🎵  音乐下载器 v2.0  🎵")
+    print("           🎵  拾音 v2.0  🎵")
     print("                多平台聚合")
     print("     支持：咪咕 | 网易云 | QQ音乐 | 酷我")
     print("═" * 52)

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 音乐下载器 —— Linux .deb 构建脚本（Debian / Ubuntu）
+# 拾音 —— Linux .deb 构建脚本（Debian / Ubuntu）
 #
-# 产物：dist/music-downloader_<version>-1_<arch>.deb
+# 产物：dist/shiyin_<version>-1_<arch>.deb
 # 安装布局：
-#   /opt/music-downloader/            PyInstaller onedir 程序
-#   /usr/bin/music-downloader         启动命令（符号链接）
+#   /opt/shiyin/                      PyInstaller onedir 程序
+#   /usr/bin/shiyin                   启动命令（符号链接）
 #   /usr/share/applications/          桌面项
 #   /usr/share/icons/hicolor/*/apps/  各尺寸图标
-# 卸载：dpkg -r music-downloader（标准维护脚本自动刷新系统缓存）
+# 卸载：dpkg -r shiyin（标准维护脚本自动刷新系统缓存）
 #
 # 可选：将静态 ffmpeg 二进制放到 installer/bin/ffmpeg，会自动随包打入；
 #       否则 .deb 通过 Depends 声明 ffmpeg 系统依赖。
@@ -18,7 +18,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 VERSION="$(tr -d ' \n' < installer/VERSION)"
-APP_NAME="MusicDownloader"
+APP_NAME="Shiyin"
+PKG_NAME="shiyin"
 PYTHON="${PYTHON:-python3}"
 
 ARCH="$("${PYTHON:-python3}" - <<'PY'
@@ -28,8 +29,8 @@ print({"x86_64": "amd64", "aarch64": "arm64", "armv7l": "armhf"}.get(m, m))
 PY
 )"
 
-STAGE="build/deb/music-downloader_${VERSION}-1_${ARCH}"
-OUT="dist/music-downloader_${VERSION}-1_${ARCH}.deb"
+STAGE="build/deb/${PKG_NAME}_${VERSION}-1_${ARCH}"
+OUT="dist/${PKG_NAME}_${VERSION}-1_${ARCH}.deb"
 
 echo "==> [1/4] 生成图标并 PyInstaller 冻结"
 QT_QPA_PLATFORM=offscreen "$PYTHON" assets/icons/gen_icons.py
@@ -38,28 +39,27 @@ QT_QPA_PLATFORM=offscreen "$PYTHON" assets/icons/gen_icons.py
 
 echo "==> [2/4] 编排 .deb 目录树"
 rm -rf "$STAGE"
-mkdir -p "$STAGE/opt/music-downloader" \
+mkdir -p "$STAGE/opt/${PKG_NAME}" \
          "$STAGE/usr/bin" \
          "$STAGE/usr/share/applications" \
          "$STAGE/usr/share/icons/hicolor" \
          "$STAGE/DEBIAN"
 
-cp -R "dist/${APP_NAME}/." "$STAGE/opt/music-downloader/"
+cp -R "dist/${APP_NAME}/." "$STAGE/opt/${PKG_NAME}/"
 
 # 启动命令
-ln -s /opt/music-downloader/"$APP_NAME" "$STAGE/usr/bin/music-downloader"
+ln -s /opt/${PKG_NAME}/"$APP_NAME" "$STAGE/usr/bin/${PKG_NAME}"
 
 # 桌面项
-cp installer/linux/music-downloader.desktop "$STAGE/usr/share/applications/"
+cp installer/linux/${PKG_NAME}.desktop "$STAGE/usr/share/applications/"
 
 # 各尺寸图标（freedesktop hicolor 规范）
 for SIZE in 16 24 32 48 64 128 256 512; do
     SRC="assets/icons/icon_${SIZE}.png"
     DIR="$STAGE/usr/share/icons/hicolor/${SIZE}x${SIZE}/apps"
     mkdir -p "$DIR"
-    cp "$SRC" "$DIR/music-downloader.png"
+    cp "$SRC" "$DIR/${PKG_NAME}.png"
 done
-cp assets/icons/icon_256.png "$STAGE/usr/share/icons/hicolor/256x256/apps/music-downloader.png" 2>/dev/null || true
 
 echo "==> [3/4] 生成 control 与维护脚本"
 INSTALLED_SIZE="$(du -sk "$STAGE" | cut -f1)"
@@ -80,4 +80,4 @@ echo "完成：$ROOT/$OUT"
 ls -lh "$OUT"
 echo ""
 echo "安装：sudo apt install ./$(basename "$OUT")"
-echo "卸载：sudo apt remove music-downloader"
+echo "卸载：sudo apt remove ${PKG_NAME}"

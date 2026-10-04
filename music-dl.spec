@@ -21,9 +21,9 @@ ROOT = os.path.abspath(os.getcwd())
 with open(os.path.join(ROOT, "installer", "VERSION"), encoding="utf-8") as f:
     APP_VERSION = f.read().strip()
 
-APP_NAME = "MusicDownloader"          # 内部名（英文，保证跨平台路径安全）
-APP_DISPLAY_NAME = "音乐下载器"
-BUNDLE_ID = "com.musicdownloader.app"
+APP_NAME = "Shiyin"                    # 内部名（英文，保证跨平台路径安全）
+APP_DISPLAY_NAME = "拾音"
+BUNDLE_ID = "com.shiyin.app"
 
 # ---- 数据文件（只打入运行时需要的资源，排除矢量源/生成脚本/iconset）----
 def collect_assets():
@@ -44,12 +44,16 @@ def collect_assets():
 
 datas = collect_assets()
 
-# ---- 二进制（可选内置 ffmpeg）----
+# ---- 二进制（可选内置 ffmpeg / ffprobe，来自 installer/bin/）----
+# 静态构建仅依赖系统库，无需额外收集 dylib；运行时由 media.py 按
+# resource_path("bin", ...) → PATH 的顺序定位。
 binaries = []
-_ffmpeg_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
-_ffmpeg_src = os.path.join(ROOT, "installer", "bin", _ffmpeg_name)
-if os.path.isfile(_ffmpeg_src):
-    binaries.append((_ffmpeg_src, "."))
+_bin_src_dir = os.path.join(ROOT, "installer", "bin")
+for _tool in ("ffmpeg", "ffprobe"):
+    _tool_exe = _tool + (".exe" if sys.platform == "win32" else "")
+    _tool_src = os.path.join(_bin_src_dir, _tool_exe)
+    if os.path.isfile(_tool_src):
+        binaries.append((_tool_src, "bin"))
 
 # ---- 隐式依赖（动态导入的第三方包）----
 hiddenimports = [
@@ -124,7 +128,8 @@ app = BUNDLE(
         "CFBundleShortVersionString": APP_VERSION,
         "CFBundleVersion": APP_VERSION,
         "NSHighResolutionCapable": True,
-        "LSMinimumSystemVersion": "11.0",
+        "CFBundleDevelopmentRegion": "zh-Hans",
+        "LSMinimumSystemVersion": "12.0",
         "NSMicrophoneUsageDescription": "应用不需要麦克风权限。",
     },
 ) if sys.platform == "darwin" else None

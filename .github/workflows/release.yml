@@ -17,16 +17,16 @@ jobs:
         include:
           - os: windows-latest
             os_name: windows
-            artifact_name: MusicDownloader-windows-x64
-            asset_glob: "MusicDownloader-*-windows-x64-setup.exe"
+            artifact_name: Shiyin-windows-x64
+            asset_glob: "Shiyin-*-windows-x64-setup.exe"
           - os: macos-latest
             os_name: macos
-            artifact_name: MusicDownloader-macos-arm64
-            asset_glob: "MusicDownloader-*-macos-arm64.pkg"
+            artifact_name: Shiyin-macos-arm64
+            asset_glob: "Shiyin-*-macos-arm64.pkg"
           - os: ubuntu-24.04
             os_name: linux
-            artifact_name: MusicDownloader-linux-amd64
-            asset_glob: "music-downloader_*_amd64.deb"
+            artifact_name: Shiyin-linux-amd64
+            asset_glob: "shiyin_*_amd64.deb"
 
     steps:
       - name: 检出代码
@@ -45,8 +45,8 @@ jobs:
           pip install -r requirements.txt
           pip install pillow pyinstaller
 
-      # ---- 准备静态 ffmpeg（随安装包内置，免用户另行安装）----
-      - name: 下载 ffmpeg（Windows / BtbN GPL 静态构建）
+      # ---- 准备静态 ffmpeg/ffprobe（随安装包内置，免用户另行安装）----
+      - name: 下载 ffmpeg / ffprobe（Windows / BtbN GPL 静态构建）
         if: matrix.os_name == 'windows'
         shell: bash
         run: |
@@ -55,19 +55,24 @@ jobs:
             https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
           7z x /tmp/ffmpeg.zip -o/tmp/ffmpeg -y | tail -2
           cp /tmp/ffmpeg/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe installer/bin/
+          cp /tmp/ffmpeg/ffmpeg-master-latest-win64-gpl/bin/ffprobe.exe installer/bin/
           ./installer/bin/ffmpeg.exe -version | head -1
 
-      - name: 下载 ffmpeg（macOS / evermeet 静态构建）
+      - name: 下载 ffmpeg / ffprobe（macOS arm64 / ffmpeg-static 静态构建）
         if: matrix.os_name == 'macos'
         shell: bash
         run: |
+          set -e
           mkdir -p installer/bin
-          curl -L --retry 3 -o /tmp/ffmpeg.zip https://evermeet.cx/ffmpeg/getrelease/zip
-          unzip -o /tmp/ffmpeg.zip -d installer/bin
-          chmod +x installer/bin/ffmpeg
+          BASE="https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1"
+          curl -L --retry 3 -o /tmp/ffmpeg.gz "$BASE/ffmpeg-darwin-arm64.gz"
+          curl -L --retry 3 -o /tmp/ffprobe.gz "$BASE/ffprobe-darwin-arm64.gz"
+          gunzip -c /tmp/ffmpeg.gz  > installer/bin/ffmpeg
+          gunzip -c /tmp/ffprobe.gz > installer/bin/ffprobe
+          chmod +x installer/bin/ffmpeg installer/bin/ffprobe
           installer/bin/ffmpeg -version | head -1
 
-      - name: 下载 ffmpeg（Linux / johnvansickle 静态构建）
+      - name: 下载 ffmpeg / ffprobe（Linux / johnvansickle 静态构建）
         if: matrix.os_name == 'linux'
         shell: bash
         run: |
@@ -75,8 +80,8 @@ jobs:
           curl -L --retry 3 -o /tmp/ffmpeg.tar.xz \
             https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
           tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
-          cp /tmp/ffmpeg/ffmpeg installer/bin/
-          chmod +x installer/bin/ffmpeg
+          cp /tmp/ffmpeg/ffmpeg /tmp/ffmpeg/ffprobe installer/bin/
+          chmod +x installer/bin/ffmpeg installer/bin/ffprobe
           installer/bin/ffmpeg -version | head -1
 
       # ---- 平台安装包 ----

@@ -1,7 +1,7 @@
 # =============================================================================
-# 音乐下载器 —— Windows 安装包构建脚本（PowerShell，在 Windows 上执行）
+# 拾音 —— Windows 安装包构建脚本（PowerShell，在 Windows 上执行）
 #
-# 产物：dist\MusicDownloader-<version>-windows-x64-setup.exe
+# 产物：dist\Shiyin-<version>-windows-x64-setup.exe
 # 前置：Python 3.10+（含 pip）、Inno Setup 6（默认安装路径自动探测；
 #       也可用 choco install innosetup 安装）
 #
@@ -24,8 +24,8 @@ python assets\icons\gen_icons.py
 
 Write-Host "==> [3/4] PyInstaller 冻结"
 python -m PyInstaller music-dl.spec --noconfirm
-if (-not (Test-Path "dist\MusicDownloader\MusicDownloader.exe")) {
-    throw "未找到 dist\MusicDownloader\MusicDownloader.exe"
+if (-not (Test-Path "dist\Shiyin\Shiyin.exe")) {
+    throw "未找到 dist\Shiyin\Shiyin.exe"
 }
 
 Write-Host "==> [4/4] Inno Setup 编译安装向导"
@@ -44,4 +44,4 @@ if (-not $Iscc) { throw "未找到 ISCC.exe，请先安装 Inno Setup 6" }
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败" }
 
 Write-Host ""
-Write-Host "完成：$Root\dist\MusicDownloader-$Version-windows-x64-setup.exe"
+Write-Host "完成：$Root\dist\Shiyin-$Version-windows-x64-setup.exe"

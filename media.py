@@ -30,24 +30,31 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---- 常量 ----
 
-def _resolve_ffmpeg() -> str:
-    """定位 ffmpeg：优先随安装包内置，其次系统 PATH。"""
-    exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-    # PyInstaller --add-binary 的几种常见落点
+def _resolve_bundled(name: str) -> Optional[str]:
+    """在随安装包内置的位置查找可执行文件（PyInstaller 冻结目录）。"""
+    exe = f"{name}.exe" if os.name == "nt" else name
+    # 与 music-dl.spec 中 binaries 的目标目录约定保持一致；
+    # 末项兼容源码运行（二进制位于项目 installer/bin/）。
     candidates = (
-        resource_path("ffmpeg", "bin", exe),
         resource_path("bin", exe),
+        resource_path("ffmpeg", "bin", exe),
         resource_path("ffmpeg", exe),
         resource_path(exe),
+        resource_path("installer", "bin", exe),
     )
     for c in candidates:
         if os.path.isfile(c) and os.access(c, os.X_OK):
             return c
-    return shutil.which("ffmpeg") or "ffmpeg"
+    return None
 
 
-FFMPEG_BIN: str = _resolve_ffmpeg()
-FFPROBE_BIN: str = shutil.which("ffprobe") or "ffprobe"
+def _resolve_tool(name: str) -> str:
+    """定位媒体工具：优先随安装包内置，其次系统 PATH，最后退回裸命令名。"""
+    return _resolve_bundled(name) or shutil.which(name) or name
+
+
+FFMPEG_BIN: str = _resolve_tool("ffmpeg")
+FFPROBE_BIN: str = _resolve_tool("ffprobe")
 
 CONVERT_OFF = "off"
 CONVERT_MP3 = "mp3"

@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <!-- productbuild 分发描述：标准安装引导（欢迎 → 选择卷宗 → 安装） -->
 <installer-gui-script minSpecVersion="2">
-    <title>音乐下载器 __VERSION__</title>
+    <title>拾音 __VERSION__</title>
     <welcome file="welcome.txt" />
     <license file="license.txt" />
-    <organization>com.musicdownloader</organization>
+    <organization>com.shiyin</organization>
     <options customize="never" require-scripts="false" rootVolumeOnly="true" />
-    <pkg-ref id="com.musicdownloader.app"
+    <pkg-ref id="com.shiyin.app"
              version="__VERSION__"
-             onConclusion="none">MusicDownloader-component.pkg</pkg-ref>
+             onConclusion="none">Shiyin-component.pkg</pkg-ref>
     <choices-outline>
         <line choice="default">
-            <line choice="com.musicdownloader.app"/>
+            <line choice="com.shiyin.app"/>
         </line>
     </choices-outline>
     <choice id="default"/>
-    <choice id="com.musicdownloader.app"
+    <choice id="com.shiyin.app"
             visible="false"
-            title="音乐下载器"
+            title="拾音"
             start_selected="true">
-        <pkg-ref id="com.musicdownloader.app"/>
+        <pkg-ref id="com.shiyin.app"/>
     </choice>
 </installer-gui-script>

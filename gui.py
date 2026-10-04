@@ -54,7 +54,7 @@ MAX_TASK_PANEL_HEIGHT = 4 * TASK_ROW_HEIGHT
 UI_FONT = "PingFang SC"
 MONO_FONT = "SF Mono"
 
-APP_TITLE = "音乐下载器"
+APP_TITLE = "拾音"
 APP_VERSION = "v3.1"
 APP_SUBTITLE = "多平台聚合 · 咪咕 网易云 QQ音乐 酷我"
 

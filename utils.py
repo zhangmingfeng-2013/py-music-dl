@@ -62,8 +62,8 @@ def is_frozen() -> bool:
 
 def user_config_dir() -> str:
     """各平台标准的用户可写配置目录（打包后使用）：
-    Windows %APPDATA%/music-dl；macOS ~/Library/Application Support/music-dl；
-    Linux $XDG_CONFIG_HOME/music-dl 或 ~/.config/music-dl。
+    Windows %APPDATA%/shiyin；macOS ~/Library/Application Support/shiyin；
+    Linux $XDG_CONFIG_HOME/shiyin 或 ~/.config/shiyin。
     """
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
@@ -71,7 +71,7 @@ def user_config_dir() -> str:
         base = os.path.expanduser("~/Library/Application Support")
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    d = os.path.join(base, "music-dl")
+    d = os.path.join(base, "shiyin")
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -84,9 +84,9 @@ def user_config_path(filename: str) -> str:
 
 
 def default_download_dir() -> str:
-    """默认下载目录。打包后固定到用户“下载/music-dl”，避免安装目录只读。"""
+    """默认下载目录。打包后固定到用户"下载/shiyin"，避免安装目录只读。"""
     if is_frozen():
-        return os.path.join(os.path.expanduser("~"), "Downloads", "music-dl")
+        return os.path.join(os.path.expanduser("~"), "Downloads", "shiyin")
     return DEFAULT_DOWNLOAD_DIR
 
 # ---- 文件名校验 ----

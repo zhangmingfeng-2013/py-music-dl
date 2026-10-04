@@ -1,14 +1,14 @@
 [Desktop Entry]
 Type=Application
-Name=音乐下载器
-Name[zh_CN]=音乐下载器
+Name=拾音
+Name[zh_CN]=拾音
 GenericName=Music Downloader
 Comment=多平台聚合音乐搜索与下载工具
 Comment[zh_CN]=多平台聚合音乐搜索与下载工具
-Exec=/opt/music-downloader/MusicDownloader
-Icon=music-downloader
+Exec=/opt/shiyin/Shiyin
+Icon=shiyin
 Terminal=false
 Categories=AudioVideo;Audio;Network;FileTransfer;
 Keywords=music;download;audio;音乐;下载;
-StartupWMClass=MusicDownloader
+StartupWMClass=Shiyin
 StartupNotify=true

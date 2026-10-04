@@ -72,7 +72,7 @@ class MusicDownloaderGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎵 音乐下载器 v1.0")
+        self.root.title("🎵 拾音 v1.0")
         self.root.geometry("900x650")
         self.root.resizable(True, True)
 
