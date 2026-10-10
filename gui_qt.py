@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -111,6 +112,59 @@ def app_icon() -> QIcon:
     """应用图标（窗口标题栏/任务栏/Dock）。"""
     path = app_icon_path()
     return QIcon(path) if path else QIcon()
+
+
+def ensure_qt_plugins_visible() -> None:
+    """macOS 源码直跑自愈：清除 .venv 内 PyQt6 插件文件的 BSD hidden 标志。
+
+    根因：macOS 文件/目录可携带 hidden 标志（chflags hidden 设置的 UF_HIDDEN）。
+    Qt 的目录枚举默认不返回该类条目，导致插件工厂扫描 PyQt6/Qt6/plugins/
+    platforms 时将其视为空目录，启动即报
+    "Could not find the Qt platform plugin 'cocoa'"；而 os.listdir/ls 不受
+    此标志影响，极具迷惑性。若 venv 树被第三方工具批量打上该标志，GUI 将
+    无法启动。此处启动前检测插件 dylib 的标志状态，命中则清除整个
+    Qt6/plugins 子树的 hidden 标志并告警，保证插件扫描可见。
+    """
+    if sys.platform != "darwin" or getattr(sys, "frozen", False):
+        return  # 仅 macOS 源码直跑场景；打包应用自带插件目录，不受影响
+    if not (hasattr(os, "chflags") and hasattr(stat, "UF_HIDDEN")):
+        return  # 非 macOS 兼容层，静默跳过
+    try:
+        import PyQt6
+    except ImportError:
+        return  # 未安装 PyQt6 时交由后续 import 流程正常报错
+    plugins_root = os.path.join(os.path.dirname(PyQt6.__file__), "Qt6", "plugins")
+    platforms_dir = os.path.join(plugins_root, "platforms")
+    try:
+        dylibs = [f for f in os.listdir(platforms_dir) if f.endswith(".dylib")]
+        if not dylibs:
+            return  # 插件目录缺失（重装中/异常安装），交由 Qt 自行报错定位
+        if not any(
+            os.stat(os.path.join(platforms_dir, f)).st_flags & stat.UF_HIDDEN
+            for f in dylibs
+        ):
+            return  # 无 hidden 标志，正常路径，零开销
+        fixed = 0
+        for dirpath, dirnames, filenames in os.walk(plugins_root):
+            for name in [*dirnames, *filenames]:
+                p = os.path.join(dirpath, name)
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue  # 竞态删除等场景跳过单个条目
+                if st.st_flags & stat.UF_HIDDEN:
+                    try:
+                        os.chflags(p, st.st_flags & ~stat.UF_HIDDEN)
+                        fixed += 1
+                    except OSError:
+                        pass  # 权限不足等场景保持静默，由 Qt 后续报错兜底
+        print(
+            f"[拾音] 已清除 PyQt6 插件目录 {fixed} 个条目的 macOS hidden 标志"
+            f"（UF_HIDDEN 会使 Qt 平台插件扫描不可见）：{plugins_root}",
+            file=sys.stderr,
+        )
+    except (OSError, AttributeError):
+        return  # 探测/修复失败不影响启动主流程
 
 
 def apply_macos_app_identity() -> None:
@@ -3968,6 +4022,7 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     demo = "--demo" in sys.argv
+    ensure_qt_plugins_visible()  # 需在 QApplication 之前，保证平台插件可被扫描
     apply_macos_app_identity()  # 需在 QApplication 之前，修正 Dock/菜单栏名称
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
