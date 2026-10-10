@@ -3,7 +3,9 @@ beautifulsoup4>=4.11.0
 lxml>=4.9.0
 urllib3>=1.26.0
 pyqt6>=6.5.0
-pyglass>=0.1.0
+pyglass-qt>=0.1.0
+# macOS 源码直跑时修正 Dock/菜单栏应用名（gui_qt.py 应用身份注入）
+pyobjc-framework-Cocoa>=9.0; sys_platform == "darwin"
 numpy>=1.26.0
 mutagen>=1.46.0
 # 音频转码需系统安装 ffmpeg（brew install ffmpeg / apt install ffmpeg）

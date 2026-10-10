@@ -95,16 +95,60 @@ APP_VERSION = "v3.2 · Qt"
 APP_SUBTITLE = "多平台聚合 · 咪咕 网易云 QQ音乐 酷我"
 
 
-def app_icon() -> QIcon:
-    """应用图标（窗口标题栏/任务栏/Dock）。Windows 用多帧 ICO，其余平台用高清 PNG。"""
+def app_icon_path() -> str:
+    """图标文件路径。Windows 用多帧 ICO，其余平台用高清 PNG；缺失时返回空串。"""
     if sys.platform == "win32":
         path = resource_path("assets", "icons", "app.ico")
         if os.path.exists(path):
-            return QIcon(path)
+            return path
     path = resource_path("assets", "icons", "icon_512.png")
     if not os.path.exists(path):
         path = resource_path("assets", "icons", "icon_256.png")
-    return QIcon(path) if os.path.exists(path) else QIcon()
+    return path if os.path.exists(path) else ""
+
+
+def app_icon() -> QIcon:
+    """应用图标（窗口标题栏/任务栏/Dock）。"""
+    path = app_icon_path()
+    return QIcon(path) if path else QIcon()
+
+
+def apply_macos_app_identity() -> None:
+    """源码直跑时修正 macOS 应用身份，避免 Dock/菜单栏显示 "Python"。
+
+    打包后的 Shiyin.app 自带 Info.plist，无需处理；仅解释器直跑场景生效。
+    必须在创建 QApplication 之前调用——LaunchServices 在 NSApplication
+    初始化时读取 CFBundleName/CFBundleDisplayName 注册进程显示名。
+    """
+    if sys.platform != "darwin" or getattr(sys, "frozen", False):
+        return
+    try:
+        from AppKit import NSBundle  # pyobjc-framework-Cocoa
+    except ImportError:
+        return  # 未安装 pyobjc 时静默跳过，保持默认行为
+    try:
+        info = NSBundle.mainBundle().infoDictionary()
+        if info is not None:
+            info["CFBundleName"] = APP_TITLE
+            info["CFBundleDisplayName"] = APP_TITLE
+    except Exception:
+        pass  # 身份修正为纯外观优化，失败不影响主流程
+
+
+def apply_macos_dock_icon(icon_path: str) -> None:
+    """源码直跑时显式设置 Dock 图标（Qt 一般会从 windowIcon 同步，此处兜底）。"""
+    if sys.platform != "darwin" or getattr(sys, "frozen", False) or not icon_path:
+        return
+    try:
+        from AppKit import NSApplication, NSImage  # pyobjc-framework-Cocoa
+    except ImportError:
+        return
+    try:
+        img = NSImage.alloc().initWithContentsOfFile_(icon_path)
+        if img is not None:
+            NSApplication.sharedApplication().setApplicationIconImage_(img)
+    except Exception:
+        pass  # 同上，纯外观优化
 
 
 # 音质筛选项（标签 → 最低 tier；"全部" 不过滤）
@@ -3924,12 +3968,14 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     demo = "--demo" in sys.argv
+    apply_macos_app_identity()  # 需在 QApplication 之前，修正 Dock/菜单栏名称
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName(APP_TITLE)
     icon = app_icon()
     if not icon.isNull():
         app.setWindowIcon(icon)  # 所有窗口默认图标
+        apply_macos_dock_icon(app_icon_path())  # 源码直跑时兜底设置 Dock 图标
     base = QFont(UI_FONT)
     base.setPixelSize(12)
     app.setFont(base)

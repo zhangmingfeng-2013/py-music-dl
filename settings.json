@@ -3,7 +3,7 @@
   "theme_mode": "auto",
   "per_task_speed": 0,
   "global_speed": 0,
-  "download_dir": "downloaded_music",
+  "download_dir": "/Volumes/ZHANGMF/Music/",
   "convert_mode": "flac",
   "mp3_bitrate": 320,
   "write_tags": true,
