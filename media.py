@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -30,6 +31,30 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---- 常量 ----
 
+def _matches_host_platform(path: str) -> bool:
+    """校验二进制魔数与宿主平台匹配。
+
+    installer/bin/ 内可能同时存放为 Linux 打包下载的 ELF 静态二进制，
+    macOS 源码直跑时若仅凭存在性选中它，执行会得到 exec format error；
+    Windows 下同理需要 PE 头。魔数不符的候选直接排除，回退系统 PATH。
+    """
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+    except OSError:
+        return False
+    if os.name == "nt":
+        return magic[:2] == b"MZ"
+    if sys.platform == "darwin":
+        # Mach-O 32/64 位（大小端）与 Universal Binary（FAT/FAT64）
+        return magic in (
+            b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf",
+        )
+    return magic == b"\x7fELF"  # 其余类 Unix 平台按 ELF 判定
+
+
 def _resolve_bundled(name: str) -> Optional[str]:
     """在随安装包内置的位置查找可执行文件（PyInstaller 冻结目录）。"""
     exe = f"{name}.exe" if os.name == "nt" else name
@@ -43,7 +68,11 @@ def _resolve_bundled(name: str) -> Optional[str]:
         resource_path("installer", "bin", exe),
     )
     for c in candidates:
-        if os.path.isfile(c) and os.access(c, os.X_OK):
+        if (
+            os.path.isfile(c)
+            and os.access(c, os.X_OK)
+            and _matches_host_platform(c)
+        ):
             return c
     return None
 

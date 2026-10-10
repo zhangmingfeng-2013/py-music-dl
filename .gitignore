@@ -13,3 +13,5 @@ tip_records.json.bak
 tip_records.json.tmp
 LiquidGlassUI/.build
 *.pyc
+search_history.json
+artist_history.json
