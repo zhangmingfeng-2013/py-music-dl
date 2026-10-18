@@ -121,6 +121,7 @@ class PostOptions:
     embed_cover: bool = True            # 内嵌专辑封面
     save_lrc: bool = True               # 保存同名 .lrc 文件
     embed_lyrics: bool = True           # 歌词写入音频标签
+    whisper_fallback: bool = True       # API 歌词缺失时用 Whisper 语音识别兜底
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "PostOptions":
@@ -137,6 +138,7 @@ class PostOptions:
             embed_cover=bool(cfg.get("embed_cover", True)),
             save_lrc=bool(cfg.get("save_lrc", True)),
             embed_lyrics=bool(cfg.get("embed_lyrics", True)),
+            whisper_fallback=bool(cfg.get("whisper_fallback", True)),
         )
 
 
@@ -353,6 +355,22 @@ def post_process(task: Any, options: PostOptions,
         try:
             lrc_text = lyrics_fetcher(meta) or ""
         except Exception:  # noqa: BLE001
+            lrc_text = ""
+
+    # 2.5) API 歌词缺失时的 Whisper 语音识别兜底
+    if need_lyrics and not lrc_text and options.whisper_fallback:
+        try:
+            from transcribe import transcribe_to_lrc, whisper_available
+            if whisper_available():
+                _remark("Whisper 识别歌词…")
+                lrc_text = transcribe_to_lrc(
+                    final_path,
+                    meta_title=str(meta.get("title", "") or ""),
+                    meta_artist=str(meta.get("artist", "") or ""),
+                    progress_cb=_remark,
+                ) or ""
+        except Exception as e:  # noqa: BLE001
+            log.warning("Whisper 歌词兜底失败 (%s): %s", task.display_name, e)
             lrc_text = ""
 
     if lrc_text:

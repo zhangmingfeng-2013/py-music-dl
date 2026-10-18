@@ -56,7 +56,7 @@ from PyQt6.QtWidgets import (
     QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
     QScrollArea, QSizePolicy, QSlider, QSpinBox, QTreeWidget, QTreeWidgetItem,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QPushButton,
 )
 
 import numpy as np
@@ -76,7 +76,7 @@ from api import (  # noqa: E402
     search_all_platforms, strip_lrc_timestamps,
 )
 from downloader import DownloadQueue, DownloadTask, RateLimiter, TaskStatus  # noqa: E402
-from media import CONVERT_FLAC, CONVERT_MP3, CONVERT_OFF, MP3_BITRATES, PostOptions, ffmpeg_available  # noqa: E402
+from media import CONVERT_FLAC, CONVERT_MP3, CONVERT_OFF, MP3_BITRATES, PostOptions, download_cover, ffmpeg_available  # noqa: E402
 from utils import (  # noqa: E402
     DEFAULT_DOWNLOAD_DIR, default_download_dir, ensure_download_dir,
     format_speed, quality_tier, resource_path,
@@ -2356,6 +2356,7 @@ class _Bus(QObject):
     preview_ready = pyqtSignal(object)  # (url, title)
     preview_err = pyqtSignal(str)
     lyrics_ready = pyqtSignal(object)   # (generation, title, lrc_text|None)
+    recognize_ready = pyqtSignal(object)  # (ok: bool, payload: dict|None)
 
 
 # ==================== 下载设置弹窗 ====================
@@ -2438,6 +2439,9 @@ class SettingsDialog(QDialog):
         self.embed_lrc_chk = self._check_row(
             lay, "歌词内嵌到音频标签（ID3 USLT / FLAC LYRICS）",
             bool(cfg.get("embed_lyrics", True)))
+        self.whisper_chk = self._check_row(
+            lay, "歌词检索失败时使用 Whisper 语音识别（首次需下载模型）",
+            bool(cfg.get("whisper_fallback", True)))
 
         row = QHBoxLayout()
         row.addStretch(1)
@@ -2534,6 +2538,7 @@ class SettingsDialog(QDialog):
             "embed_cover": self.cover_chk.isChecked(),
             "save_lrc": self.lrc_chk.isChecked(),
             "embed_lyrics": self.embed_lrc_chk.isChecked(),
+            "whisper_fallback": self.whisper_chk.isChecked(),
         }
 
 
@@ -2737,6 +2742,7 @@ class MainWindow(QMainWindow):
         self.bus.preview_ready.connect(self._on_preview_ready)
         self.bus.preview_err.connect(self._on_preview_err)
         self.bus.lyrics_ready.connect(self._on_lyrics_ready)
+        self.bus.recognize_ready.connect(self._on_recognize_ready)
         self.player.state_changed.connect(self._on_player_state)
         self.player.position_changed.connect(self._on_player_position)
         self.player.duration_changed.connect(self._on_player_duration)
@@ -2924,8 +2930,11 @@ class MainWindow(QMainWindow):
                                         command=self._open_download_dir)
         self.clear_results_btn = GlassButton("清空结果", kind="ghost", glyph="trash",
                                              command=self._clear_results)
+        self.recognize_btn = GlassButton("识歌", kind="ghost", glyph="search",
+                                         width=84, command=self._on_recognize_audio)
         for b in (self.preview_btn, self.lyrics_btn, self.download_sel_btn,
-                  self.download_all_btn, self.open_dir_btn, self.clear_results_btn):
+                  self.download_all_btn, self.open_dir_btn, self.clear_results_btn,
+                  self.recognize_btn):
             row.addWidget(b)
         row.addStretch(1)
         root.addLayout(row)
@@ -2934,7 +2943,8 @@ class MainWindow(QMainWindow):
         self.download_sel_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
         self._themed += [self.preview_btn, self.lyrics_btn, self.download_sel_btn,
-                         self.download_all_btn, self.open_dir_btn, self.clear_results_btn]
+                         self.download_all_btn, self.open_dir_btn, self.clear_results_btn,
+                         self.recognize_btn]
 
     def _build_tasks(self, root: QVBoxLayout) -> None:
         self.tasks_panel = GlassPanel(self.ambient, pad=(12, 10, 12, 10))
@@ -3942,6 +3952,106 @@ class MainWindow(QMainWindow):
             self._log(f"未找到歌词: {name}")
             self._set_status("未找到该歌曲歌词", "warn")
 
+    # ---------- 音频指纹识歌 ----------
+
+    def _on_recognize_audio(self) -> None:
+        """工具栏"识歌"：选择本地音频文件，后台指纹识别。"""
+        from recognize import SUPPORTED_EXT, recognize_available
+        if not recognize_available():
+            QMessageBox.warning(
+                self, "提示",
+                "识歌功能不可用：请安装 shazamio（pip install shazamio）"
+                "并确保 ffmpeg 可用。")
+            return
+        exts = " ".join(f"*{e}" for e in sorted(SUPPORTED_EXT))
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择要识别的音频文件", "", f"音频文件 ({exts})")
+        if not path:
+            return
+        self._set_status(f"正在识别: {os.path.basename(path)}", "busy")
+        threading.Thread(target=self._recognize_worker, args=(path,),
+                         daemon=True).start()
+
+    def _recognize_worker(self, path: str) -> None:
+        try:
+            from recognize import recognize_file
+            info = recognize_file(path)
+        except Exception:  # noqa: BLE001
+            info = None
+        cover = None
+        if info and info.get("cover_url"):
+            # 封面在后台线程下载，避免阻塞 UI
+            cover = download_cover(str(info["cover_url"]))
+        self.bus.recognize_ready.emit((info, cover))
+
+    def _on_recognize_ready(self, payload: object) -> None:
+        info, cover = payload
+        if not info:
+            self._set_status("未识别到歌曲", "warn")
+            QMessageBox.information(
+                self, "识歌结果", "未能识别该音频，请尝试更完整或更清晰的片段。")
+            return
+        title = info.get("title") or "未知"
+        artist = info.get("artist") or "未知"
+        album = info.get("album") or ""
+        self._set_status(f"识别成功: {artist} - {title}", "ok")
+        self._log(f"识歌结果: {artist} - {title}"
+                  + (f"（专辑: {album}）" if album else ""))
+
+        # 结果展示对话框：元数据 + 封面缩略图 + 一键搜索
+        pal = self.theme.palette
+        dlg = QDialog(self)
+        dlg.setWindowTitle("识歌结果")
+        dlg.setModal(True)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 16, 20, 14)
+        lay.setSpacing(8)
+        if cover:
+            data, _mime = cover
+            pm = QPixmap()
+            if pm.loadFromData(data):
+                img = QLabel(dlg)
+                img.setPixmap(pm.scaled(
+                    120, 120,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation))
+                img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lay.addWidget(img)
+        for label, value in (("歌曲", title), ("歌手", artist),
+                             ("专辑", album), ("流派", info.get("genre") or "")):
+            if not value:
+                continue
+            row = QHBoxLayout()
+            k = QLabel(f"{label}：", dlg)
+            v = QLabel(value, dlg)
+            v.setWordWrap(True)
+            row.addWidget(k)
+            row.addWidget(v, 1)
+            lay.addLayout(row)
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        search_btn = QPushButton("按识别结果搜索", dlg)
+        cancel_btn = QPushButton("关闭", dlg)
+        btns.addWidget(search_btn)
+        btns.addWidget(cancel_btn)
+        lay.addLayout(btns)
+        dlg.setStyleSheet(
+            f"QDialog {{ background: {pal.card}; }}"
+            f"QLabel {{ color: {pal.text}; background: transparent; }}"
+            f"QPushButton {{ color: {pal.text}; background: {pal.card};"
+            f" border: 1px solid {pal.divider}; border-radius: 8px; padding: 6px 14px; }}"
+            f"QPushButton:hover {{ background: {pal.accent}; color: #ffffff; }}"
+        )
+        cancel_btn.clicked.connect(dlg.reject)
+
+        def _do_search() -> None:
+            kw = f"{artist} {title}".strip()
+            dlg.accept()
+            self.search_field.set(kw)
+            self._on_search()
+
+        search_btn.clicked.connect(_do_search)
+        dlg.exec()
 
     # ---------- 主题菜单 / 打赏 ----------
 

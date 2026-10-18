@@ -70,6 +70,7 @@ DEFAULT_SETTINGS = {
     "embed_cover": True,     # 内嵌专辑封面
     "save_lrc": True,        # 同名 .lrc 文件
     "embed_lyrics": True,    # 歌词内嵌到音频标签
+    "whisper_fallback": True,  # API 歌词缺失时 Whisper 语音识别兜底
 }
 
 # ---- 开发者打赏 ----
@@ -660,7 +661,7 @@ def load_settings() -> dict[str, Any]:
                 except (TypeError, ValueError):
                     pass
                 for key in ("write_tags", "embed_cover", "save_lrc",
-                            "embed_lyrics"):
+                            "embed_lyrics", "whisper_fallback"):
                     if isinstance(saved.get(key), bool):
                         data[key] = saved[key]
     except Exception:

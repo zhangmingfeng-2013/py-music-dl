@@ -19,13 +19,20 @@ APP_DISPLAY_NAME="拾音"
 WORK="build/pkg"
 OUT="dist/${APP_NAME}-${VERSION}-macos-${ARCH}.pkg"
 
-PYTHON="${PYTHON:-python3}"
+# 优先项目 .venv（避免系统环境多 Qt 绑定 / 依赖缺失污染打包）
+if [ -z "${PYTHON:-}" ]; then
+  if [ -x "$ROOT/.venv/bin/python" ]; then
+    PYTHON="$ROOT/.venv/bin/python"
+  else
+    PYTHON="python3"
+  fi
+fi
 
 echo "==> [1/5] 生成图标资源（PNG/ICO/ICNS）"
 QT_QPA_PLATFORM=offscreen "$PYTHON" assets/icons/gen_icons.py
 
 echo "==> [2/5] PyInstaller 冻结 .app"
-"$PYTHON" -m PyInstaller music-dl.spec --noconfirm
+"$PYTHON" -m PyInstaller installer/music-dl.spec --noconfirm
 
 APP_BUNDLE="dist/${APP_NAME}.app"
 [ -d "$APP_BUNDLE" ] || { echo "未找到 $APP_BUNDLE" >&2; exit 1; }

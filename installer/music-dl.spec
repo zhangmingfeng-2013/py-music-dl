@@ -16,7 +16,11 @@
 import os
 import sys
 
-ROOT = os.path.abspath(os.getcwd())
+# 项目根 = spec 所在目录（installer/）的上级；PyInstaller 执行时注入 SPECPATH
+try:
+    ROOT = os.path.dirname(SPECPATH)
+except NameError:  # 非 PyInstaller 环境直接执行 spec 时回退 cwd
+    ROOT = os.path.abspath(os.getcwd())
 
 with open(os.path.join(ROOT, "installer", "VERSION"), encoding="utf-8") as f:
     APP_VERSION = f.read().strip()
@@ -47,13 +51,34 @@ datas = collect_assets()
 # ---- 二进制（可选内置 ffmpeg / ffprobe，来自 installer/bin/）----
 # 静态构建仅依赖系统库，无需额外收集 dylib；运行时由 media.py 按
 # resource_path("bin", ...) → PATH 的顺序定位。
+# 与 media.py _matches_host_platform 同规则校验魔数：installer/bin/ 可能
+# 存放为其他平台准备的二进制（如 Linux .deb 用的 ELF），不可打入本平台包。
+def _matches_host_platform(path):
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+    except OSError:
+        return False
+    if sys.platform == "win32":
+        return magic[:2] == b"MZ"
+    if sys.platform == "darwin":
+        return magic in (
+            b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf",
+        )
+    return magic == b"\x7fELF"
+
+
 binaries = []
 _bin_src_dir = os.path.join(ROOT, "installer", "bin")
 for _tool in ("ffmpeg", "ffprobe"):
     _tool_exe = _tool + (".exe" if sys.platform == "win32" else "")
     _tool_src = os.path.join(_bin_src_dir, _tool_exe)
-    if os.path.isfile(_tool_src):
+    if os.path.isfile(_tool_src) and _matches_host_platform(_tool_src):
         binaries.append((_tool_src, "bin"))
+    elif os.path.isfile(_tool_src):
+        print(f"    跳过平台不匹配的 {_tool}: {_tool_src}")
 
 # ---- 隐式依赖（动态导入的第三方包）----
 hiddenimports = [
@@ -72,14 +97,16 @@ for _pkg in ("pyglass",):
     hiddenimports += _h
 
 a = Analysis(
-    ["gui_qt.py"],
+    [os.path.join(ROOT, "gui_qt.py")],
     pathex=[ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["PyQt6.QtQml", "PyQt6.QtQuick", "PyQt6.QtWebEngineCore"],
+    excludes=["PyQt6.QtQml", "PyQt6.QtQuick", "PyQt6.QtWebEngineCore",
+             # 构建环境若同时装了多个 Qt 绑定会触发 PyInstaller 报错
+             "PyQt5", "PySide2", "PySide6"],
     noarchive=False,
 )
 

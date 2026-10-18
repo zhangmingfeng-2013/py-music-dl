@@ -9,3 +9,12 @@ pyobjc-framework-Cocoa>=9.0; sys_platform == "darwin"
 numpy>=1.26.0
 mutagen>=1.46.0
 # 音频转码需系统安装 ffmpeg（brew install ffmpeg / apt install ffmpeg）
+# Whisper 本地语音转写（歌词兜底，首次使用自动下载 base 模型约 140MB）
+faster-whisper>=1.0.0
+# 音频指纹识歌（Shazam 协议，免费无需 Key，依赖 ffmpeg 预处理）
+shazamio>=0.5.0
+# Python 3.13+ 移除 audioop 标准库，shazamio/pydub 依赖此替代包
+audioop-lts>=0.2.0; python_version >= "3.13"
+# 注意：Python 3.14 下 shazamio-core 官方 wheel 段错误，需源码编译：
+#   pip install --no-binary :all: --force-reinstall shazamio-core==2.0.0
+# （shazamio 0.8.1 声明锁定 ==1.1.2，实测与 2.0.0 API 兼容，仅 pip 告警）
