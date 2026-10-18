@@ -15,5 +15,6 @@
     1828,
     1019
   ],
-  "whisper_fallback": true
+  "whisper_fallback": true,
+  "naming_template": "{title} - {artist}"
 }

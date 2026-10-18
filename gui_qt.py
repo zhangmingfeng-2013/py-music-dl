@@ -23,14 +23,16 @@
   · 下载目录与限速设置 · 搜索与歌手历史 · 3 套设计方案 × 自动/浅色/深色外观
   · 开发者打赏 · --demo 设计预览模式
 
-启动：python3 gui_qt.py [--demo]
+启动：python3 gui_qt.py
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 
+import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -49,14 +51,15 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QBrush, QColor, QFont, QFontMetrics, QIcon, QImage, QLinearGradient,
     QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient,
+    QSyntaxHighlighter, QTextCharFormat,
 )
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QApplication, QCheckBox, QComboBox,
-    QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QScrollArea, QSizePolicy, QSlider, QSpinBox, QTreeWidget, QTreeWidgetItem,
-    QVBoxLayout, QWidget, QPushButton,
+    QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPlainTextEdit, QScrollArea, QSizePolicy, QSlider, QSpinBox,
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QPushButton,
 )
 
 import numpy as np
@@ -76,6 +79,10 @@ from api import (  # noqa: E402
     search_all_platforms, strip_lrc_timestamps,
 )
 from downloader import DownloadQueue, DownloadTask, RateLimiter, TaskStatus  # noqa: E402
+from naming import (  # noqa: E402
+    DEFAULT_TEMPLATE, PRESET_TEMPLATES, VARIABLES, render_name, sample_meta,
+    validate_template,
+)
 from media import CONVERT_FLAC, CONVERT_MP3, CONVERT_OFF, MP3_BITRATES, PostOptions, download_cover, ffmpeg_available  # noqa: E402
 from utils import (  # noqa: E402
     DEFAULT_DOWNLOAD_DIR, default_download_dir, ensure_download_dir,
@@ -2369,15 +2376,42 @@ _CONVERT_LABELS = [
 ]
 
 
-class SettingsDialog(QDialog):
-    """下载设置：限速 + 转码 + 元数据/歌词。"""
+class _TemplateHighlighter(QSyntaxHighlighter):
+    """命名模板语法高亮：合法变量用主题色，未知/非法语法用红色。"""
 
-    def __init__(self, parent: QWidget, pal, *, cfg: dict) -> None:
+    def __init__(self, document, pal) -> None:
+        super().__init__(document)
+        self._ok_fmt = QTextCharFormat()
+        self._ok_fmt.setForeground(QColor(getattr(pal, "accent", "#0A84FF")))
+        self._bad_fmt = QTextCharFormat()
+        self._bad_fmt.setForeground(QColor("#E5484D"))
+
+    def highlightBlock(self, text: str) -> None:  # noqa: N802  Qt 命名
+        # 完整或未闭合的 {..} token
+        for m in re.finditer(r"\{[^{}]*\}|\{[^{}]*$", text):
+            tok = m.group(0)
+            full = re.fullmatch(r"\{([a-zA-Z_]+)\}", tok)
+            if full and full.group(1) in VARIABLES:
+                self.setFormat(m.start(), len(tok), self._ok_fmt)
+            else:
+                # 空占位符 / 未知变量 / 未闭合花括号
+                self.setFormat(m.start(), len(tok), self._bad_fmt)
+        # 文件名非法字符
+        for m in re.finditer(r'[\\/:*?"<>|\r\n\t]', text):
+            self.setFormat(m.start(), 1, self._bad_fmt)
+
+
+class SettingsDialog(QDialog):
+    """下载设置：限速 + 转码 + 元数据/歌词 + 文件命名模板。"""
+
+    def __init__(self, parent: QWidget, pal, *, cfg: dict,
+                 on_naming_save: Optional[Callable[[str], None]] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("下载设置")
         self.setModal(True)
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(420)
         self._pal = pal
+        self._save_cb = on_naming_save
         self._build(cfg)
         self._apply_qss()
 
@@ -2443,6 +2477,9 @@ class SettingsDialog(QDialog):
             lay, "歌词检索失败时使用 Whisper 语音识别（首次需下载模型）",
             bool(cfg.get("whisper_fallback", True)))
 
+        lay.addWidget(self._hline())
+        self._build_naming(lay, cfg)
+
         row = QHBoxLayout()
         row.addStretch(1)
         from PyQt6.QtWidgets import QDialogButtonBox
@@ -2454,6 +2491,158 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         row.addWidget(buttons)
         lay.addLayout(row)
+
+    # ---- 文件命名模板区块 ----
+
+    _TOKEN_RE = re.compile(r"\{[^{}]*\}|\{[^{}]*$")
+    _FULL_VAR_RE = re.compile(r"\{([a-zA-Z_]+)\}")
+    _ILLEGAL_RE = re.compile(r'[\\/:*?"<>|\r\n\t]')
+
+    def _build_naming(self, lay: QVBoxLayout, cfg: dict) -> None:
+        lay.addWidget(self._section_title("文件命名模板"))
+        tip = QLabel(
+            "通过变量占位符组合下载文件名规则，保存后立即对后续下载任务生效。"
+            "可用变量：" + "  ".join(f"{{{v}}}={d}" for v, d in VARIABLES.items())
+            + "。缺失字段自动跳过，非法字符会被清理。",
+            self,
+        )
+        tip.setWordWrap(True)
+        tip.setFont(qt_font(9))
+        lay.addWidget(tip)
+
+        self._naming_editor = QPlainTextEdit(self)
+        self._naming_editor.setPlainText(
+            str(cfg.get("naming_template") or DEFAULT_TEMPLATE))
+        self._naming_editor.setFixedHeight(56)
+        self._naming_editor.textChanged.connect(self._refresh_naming)
+        lay.addWidget(self._naming_editor)
+        self._highlighter = _TemplateHighlighter(
+            self._naming_editor.document(), self._pal)
+
+        self._naming_status = QLabel("", self)
+        self._naming_status.setFont(qt_font(9))
+        self._naming_status.setWordWrap(True)
+        lay.addWidget(self._naming_status)
+
+        self._naming_preview = QLabel("", self)
+        self._naming_preview.setFont(qt_font(10, bold=True))
+        self._naming_preview.setWordWrap(True)
+        lay.addWidget(self._naming_preview)
+
+        # 预设模板快捷选择（2 行 × 3 列）
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        for i, (label, tpl) in enumerate(PRESET_TEMPLATES):
+            btn = QPushButton(label, self)
+            btn.setFont(qt_font(9))
+            btn.clicked.connect(lambda *_a, t=tpl: self._set_naming_text(t))
+            grid.addWidget(btn, i // 3, i % 3)
+        lay.addLayout(grid)
+
+        # 操作按钮：保存 / 重置 / 恢复 / 导入 / 导出
+        ops = QHBoxLayout()
+        ops.setSpacing(6)
+        for text, handler in (
+            ("保存", self._save_naming),
+            ("重置为默认", lambda: self._set_naming_text(DEFAULT_TEMPLATE)),
+            ("恢复上次使用", self._restore_last_naming),
+            ("导入", self._import_naming),
+            ("导出", self._export_naming),
+        ):
+            b = QPushButton(text, self)
+            b.setFont(qt_font(9))
+            b.clicked.connect(handler)
+            ops.addWidget(b)
+        ops.addStretch(1)
+        lay.addLayout(ops)
+
+        # 上次实际生效的模板（打开时的值 / 最近一次保存的值）
+        self._last_applied = str(cfg.get("naming_template") or DEFAULT_TEMPLATE)
+        self._refresh_naming()
+
+    def _naming_text(self) -> str:
+        return self._naming_editor.toPlainText()
+
+    def _set_naming_text(self, tpl: str) -> None:
+        self._naming_editor.setPlainText(tpl)
+
+    def _refresh_naming(self) -> None:
+        """实时刷新：语法高亮由 highlighter 处理，此处更新校验状态与预览。"""
+        tpl = self._naming_text()
+        ok, err, _used = validate_template(tpl)
+        if ok:
+            self._naming_status.setText("✓ 模板合法")
+            self._naming_status.setStyleSheet(
+                f"color: {getattr(self._pal, 'ok', '#32D74B')};")
+        else:
+            self._naming_status.setText(f"✗ {err}")
+            self._naming_status.setStyleSheet("color: #E5484D;")
+        try:
+            name = render_name(tpl, sample_meta())
+        except Exception:  # noqa: BLE001  预览异常不阻塞设置页
+            name = ""
+        self._naming_preview.setText(f"预览：{name}.flac" if name else "预览：—")
+
+    def _save_naming(self) -> None:
+        tpl = self._naming_text()
+        ok, err, _used = validate_template(tpl)
+        if not ok:
+            QMessageBox.warning(self, "命名模板错误", err)
+            return
+        self._last_applied = tpl
+        if self._save_cb:
+            self._save_cb(tpl)
+
+    def _restore_last_naming(self) -> None:
+        self._set_naming_text(self._last_applied)
+
+    def _import_naming(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入命名模板", "",
+            "模板文件 (*.json *.txt);;所有文件 (*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read()
+        except OSError as e:
+            QMessageBox.warning(self, "导入失败", f"无法读取文件：{e}")
+            return
+        tpl = raw
+        try:
+            data = json.loads(raw)
+            # 标准 JSON 格式 {"template": ...}；否则按纯文本处理
+            if isinstance(data, dict) and isinstance(data.get("template"), str):
+                tpl = data["template"]
+        except (ValueError, TypeError):
+            pass
+        self._set_naming_text(tpl.strip())
+
+    def _export_naming(self) -> None:
+        tpl = self._naming_text()
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出命名模板", "naming_template.json",
+            "模板文件 (*.json);;所有文件 (*)")
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "template": tpl},
+                          f, ensure_ascii=False, indent=2)
+        except OSError as e:
+            QMessageBox.warning(self, "导出失败", f"无法写入文件：{e}")
+            return
+        QMessageBox.information(self, "导出完成", f"模板已导出到：\n{path}")
+
+    def accept(self) -> None:
+        # 确定保存时拦截非法模板，给出明确错误提示
+        ok, err, _used = validate_template(self._naming_text())
+        if not ok:
+            QMessageBox.warning(self, "命名模板错误", err)
+            return
+        super().accept()
 
     def _section_title(self, text: str) -> QLabel:
         lbl = QLabel(text, self)
@@ -2526,6 +2715,13 @@ class SettingsDialog(QDialog):
             f" border: 1px solid {pal.divider}; background: {surface}; }}"
             "QCheckBox::indicator:checked {"
             f" background: {getattr(pal, 'accent', '#0A84FF')}; border-color: transparent; }}"
+            f"QPlainTextEdit {{ color: {pal.text}; background: {surface};"
+            f" border: 1px solid {pal.divider}; border-radius: 8px;"
+            " padding: 4px 8px; font-size: 12px; }"
+            f"QPushButton {{ color: {pal.text}; background: {surface};"
+            f" border: 1px solid {pal.divider}; border-radius: 8px;"
+            " padding: 4px 10px; font-size: 12px; }"
+            f"QPushButton:hover {{ border-color: {getattr(pal, 'accent', '#0A84FF')}; }}"
         )
 
     def values(self) -> dict:
@@ -2539,6 +2735,7 @@ class SettingsDialog(QDialog):
             "save_lrc": self.lrc_chk.isChecked(),
             "embed_lyrics": self.embed_lrc_chk.isChecked(),
             "whisper_fallback": self.whisper_chk.isChecked(),
+            "naming_template": self._naming_text(),
         }
 
 
@@ -2709,6 +2906,9 @@ class MainWindow(QMainWindow):
         # 限速设置（KB/s，0 = 不限速）与全局限流器（跨队列共享）
         saved_cfg = load_settings()
         self._settings_cfg: dict[str, Any] = dict(saved_cfg)
+        # 自定义文件命名模板（新增/修改任务实时生效，无需重启）
+        self.naming_template: str = str(
+            saved_cfg.get("naming_template") or DEFAULT_TEMPLATE)
         self.per_task_speed: int = int(saved_cfg.get("per_task_speed", 0) or 0)
         self.global_speed: int = int(saved_cfg.get("global_speed", 0) or 0)
         self._global_limiter = RateLimiter(self.global_speed * 1024)
@@ -3554,6 +3754,7 @@ class MainWindow(QMainWindow):
             task = queue.add_task(
                 title=title, artist=artist, audio_url=audio_url,
                 quality=quality, source=source, meta=meta,
+                name_template=self.naming_template,
             )
             self._add_task_row(task)
             added += 1
@@ -3738,7 +3939,9 @@ class MainWindow(QMainWindow):
     # ---------- 下载设置（限速） ----------
 
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self, self.theme.palette, cfg=self._settings_cfg)
+        dlg = SettingsDialog(
+            self, self.theme.palette, cfg=self._settings_cfg,
+            on_naming_save=self._apply_naming_template)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         values = dlg.values()
@@ -3747,6 +3950,8 @@ class MainWindow(QMainWindow):
         self.per_task_speed = per_kb
         self.global_speed = global_kb
         self._settings_cfg.update(values)
+        # 命名模板（accept 时已校验合法）：立即对后续下载任务生效
+        self.naming_template = values["naming_template"]
         # 后处理选项立即重建并同步到队列（后续任务生效）
         self._post_options = PostOptions.from_config(self._settings_cfg)
         # 全局限流器为共享实例，set_rate 立即生效；队列单任务限速同步更新
@@ -3768,6 +3973,17 @@ class MainWindow(QMainWindow):
             + (f" {values['mp3_bitrate']}kbps" if values["convert_mode"] == "mp3" else "")
         )
         self._set_status("下载设置已保存", "ok")
+
+    def _apply_naming_template(self, tpl: str) -> None:
+        """设置弹窗内「保存」回调：模板立即生效并持久化（无需关闭弹窗）。"""
+        ok, _err, _used = validate_template(tpl)
+        if not ok:
+            return
+        self.naming_template = tpl
+        self._settings_cfg["naming_template"] = tpl
+        save_settings({"naming_template": tpl})
+        self._log(f"文件命名模板已保存并生效：{tpl}")
+        self._set_status("文件命名模板已更新", "ok")
 
     def _refresh_speeds(self) -> None:
         """500ms 定时刷新：各任务行实时速度 + 总速度。"""

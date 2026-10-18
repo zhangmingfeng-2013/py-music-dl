@@ -21,6 +21,7 @@ from typing import Callable, Optional
 import requests
 import urllib3
 
+from naming import render_filename
 from utils import (
     log, safe_filename, ensure_download_dir, format_size, ext_from_url,
 )
@@ -255,14 +256,28 @@ class DownloadQueue:
     def add_task(self, *, title: str, artist: str, audio_url: str,
                  quality: str = "?", source: str = "",
                  meta: dict | None = None,
-                 task_id: str | None = None) -> DownloadTask:
-        """添加一个下载任务到队列末尾"""
+                 task_id: str | None = None,
+                 name_template: str | None = None) -> DownloadTask:
+        """添加一个下载任务到队列末尾
+
+        name_template: 自定义文件命名模板（naming.DEFAULT_TEMPLATE 等），
+        为空或非法时回退默认 "artist - title"。
+        """
         if task_id is None:
             raw = f"{artist}-{title}-{audio_url}-{time.time()}"
             task_id = hashlib.md5(raw.encode()).hexdigest()[:12]
 
         ext = ext_from_url(audio_url)
-        filename = f"{safe_filename(f'{artist} - {title}')}.{ext}"
+        meta_all = dict(meta or {})
+        meta_all.setdefault("title", title)
+        meta_all.setdefault("artist", artist)
+        meta_all.setdefault("source", source)
+        meta_all.setdefault("quality", quality)
+        try:
+            filename = render_filename(
+                name_template or "", meta_all, ext, fallback=f"{artist} - {title}")
+        except Exception:  # noqa: BLE001  命名异常不阻塞下载
+            filename = f"{safe_filename(f'{artist} - {title}')}.{ext}"
         filepath = os.path.join(self.directory, filename)
 
         task = DownloadTask(

@@ -37,6 +37,7 @@ from typing import Any, Callable, Optional
 
 from api import PLATFORM_NAMES, search_all_platforms, get_song_detail
 from downloader import DownloadQueue, DownloadTask, TaskStatus
+from naming import DEFAULT_TEMPLATE, validate_template
 from utils import (
     ensure_download_dir, format_size, DEFAULT_DOWNLOAD_DIR,
     resource_path, user_config_path,
@@ -71,6 +72,8 @@ DEFAULT_SETTINGS = {
     "save_lrc": True,        # 同名 .lrc 文件
     "embed_lyrics": True,    # 歌词内嵌到音频标签
     "whisper_fallback": True,  # API 歌词缺失时 Whisper 语音识别兜底
+    # 自定义文件命名模板（占位符规则见 naming.py）
+    "naming_template": DEFAULT_TEMPLATE,
 }
 
 # ---- 开发者打赏 ----
@@ -664,6 +667,11 @@ def load_settings() -> dict[str, Any]:
                             "embed_lyrics", "whisper_fallback"):
                     if isinstance(saved.get(key), bool):
                         data[key] = saved[key]
+                # 命名模板：字符串且校验通过才采用，否则保留默认
+                if isinstance(saved.get("naming_template"), str):
+                    ok, _err, _used = validate_template(saved["naming_template"])
+                    if ok:
+                        data["naming_template"] = saved["naming_template"]
     except Exception:
         pass
     return data
