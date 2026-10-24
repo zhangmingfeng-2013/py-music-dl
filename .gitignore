@@ -15,3 +15,5 @@ LiquidGlassUI/.build
 *.pyc
 search_history.json
 artist_history.json
+test/
+*.pylintrc

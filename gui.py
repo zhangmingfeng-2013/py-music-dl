@@ -76,7 +76,9 @@ DEFAULT_SETTINGS = {
     "naming_template": DEFAULT_TEMPLATE,
 }
 
-# ---- 开发者打赏 ----
+# ---- 历史记录 / 开发者打赏 ----
+SEARCH_HISTORY_FILE = user_config_path("search_history.json")
+ARTIST_HISTORY_FILE = user_config_path("artist_history.json")
 TIP_RECORDS_FILE = user_config_path("tip_records.json")
 TIP_QR_FILES: dict[str, str] = {
     "wechat": resource_path("assets", "tip", "wechat.png"),
@@ -694,6 +696,27 @@ def save_settings(data: dict[str, Any]) -> None:
             json.dump(merged, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+def ensure_config_files() -> None:
+    """启动时创建缺失的 JSON 配置文件（已存在则不覆盖，失败静默跳过）。"""
+    targets = (
+        (SETTINGS_FILE, DEFAULT_SETTINGS),
+        (SEARCH_HISTORY_FILE, []),
+        (ARTIST_HISTORY_FILE, []),
+        (TIP_RECORDS_FILE, []),
+    )
+    for path, payload in targets:
+        try:
+            if os.path.exists(path):
+                continue
+            directory = os.path.dirname(path) or "."
+            os.makedirs(directory, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
 
 _palette_aware: list[Callable[[Palette], None]] = []
 
@@ -1577,7 +1600,7 @@ class TaskRow(tk.Canvas):
 class SearchHistory:
     """搜索历史管理类（持久化到 JSON 文件）"""
 
-    def __init__(self, history_file: str = "search_history.json", max_items: int = 20):
+    def __init__(self, history_file: str = SEARCH_HISTORY_FILE, max_items: int = 20):
         self.history_file = history_file
         self.max_items = max_items
         self.history: list[str] = self._load_history()
@@ -1622,7 +1645,7 @@ class SearchHistory:
 class ArtistHistory:
     """歌手历史管理类（持久化到 artist_history.json）"""
 
-    def __init__(self, history_file: str = "artist_history.json", max_items: int = 50):
+    def __init__(self, history_file: str = ARTIST_HISTORY_FILE, max_items: int = 50):
         self.history_file = history_file
         self.max_items = max_items
         self.history: list[str] = self._load_history()

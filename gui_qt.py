@@ -71,7 +71,7 @@ from pyglass import (
 # 业务层与主题资产直接复用 tkinter 版实现（纯 Python，不依赖 Tk 运行时）
 from gui import (  # noqa: E402
     SCHEMES, THEME_MODES, load_settings, save_settings, system_prefers_dark,
-    SearchHistory, ArtistHistory, TipRecordStore,
+    SearchHistory, ArtistHistory, TipRecordStore, ensure_config_files,
     TIP_METHODS, TIP_QR_FILES,
 )
 from api import (  # noqa: E402
@@ -1747,8 +1747,7 @@ class TaskRow(QWidget):
         # 状态图标芯片
         self.icon_chip = QLabel(self)
         self.icon_chip.setFixedSize(30, 30)
-        self.icon_chip.setAlignment(int(Qt.AlignmentFlag.AlignCenter).__index__()
-                                    if False else Qt.AlignmentFlag.AlignCenter)
+        self.icon_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # 名称 + 进度
         mid = QVBoxLayout()
@@ -3827,7 +3826,7 @@ class MainWindow(QMainWindow):
         dlg.setInformativeText("请选择处理方式：")
         btn_overwrite = dlg.addButton(
             "覆盖现有文件", QMessageBox.ButtonRole.AcceptRole)
-        btn_skip = dlg.addButton(
+        dlg.addButton(
             "保留现有文件并取消本次下载", QMessageBox.ButtonRole.RejectRole)
         btn_rename = dlg.addButton(
             "保留现有文件并将新文件重命名下载", QMessageBox.ButtonRole.ActionRole)
@@ -4350,6 +4349,7 @@ def main() -> None:
     demo = "--demo" in sys.argv
     ensure_qt_plugins_visible()  # 需在 QApplication 之前，保证平台插件可被扫描
     apply_macos_app_identity()  # 需在 QApplication 之前，修正 Dock/菜单栏名称
+    ensure_config_files()  # 启动即创建缺失的 settings/历史/打赏 JSON 文件
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName(APP_TITLE)
