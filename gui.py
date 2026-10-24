@@ -3387,6 +3387,7 @@ class MusicDownloaderGUI:
 
 def main() -> None:
     demo = "--demo" in sys.argv
+    ensure_config_files()  # 启动即创建缺失的 settings/历史/打赏 JSON 文件
     root = tk.Tk()
     app = MusicDownloaderGUI(root, demo=demo)
     root.mainloop()
