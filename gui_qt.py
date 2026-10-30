@@ -41,7 +41,8 @@ import time
 import weakref
 from typing import Any, Callable, Optional
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# 误报抑制：IDE 检查器对 Python 3.14 标准库内省失败（运行时导入与 venv pylint 均正常）
+from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 
 from PyQt6.QtCore import (
     QEasingCurve, QEvent, QObject, QPoint, QPointF, QPropertyAnimation, QRectF,
@@ -85,7 +86,7 @@ from naming import (  # noqa: E402
 )
 from media import CONVERT_FLAC, CONVERT_MP3, CONVERT_OFF, MP3_BITRATES, PostOptions, download_cover, ffmpeg_available  # noqa: E402
 from utils import (  # noqa: E402
-    DEFAULT_DOWNLOAD_DIR, default_download_dir, ensure_download_dir,
+    default_download_dir, ensure_download_dir,
     format_speed, quality_tier, resource_path,
     TIER_HQ, TIER_LABELS, TIER_LOSSLESS, TIER_ORDER, TIER_STANDARD,
     TIER_UNKNOWN,
@@ -1729,7 +1730,7 @@ class TaskRow(QWidget):
         TaskStatus.CANCELLED: "已取消",
     }
 
-    def __init__(self, task: DownloadTask, ambient: AmbientBackground,
+    def __init__(self, task: DownloadTask,
                  on_pause_resume: Callable[[DownloadTask], None],
                  on_cancel: Callable[[DownloadTask], None],
                  parent: QWidget) -> None:
@@ -3774,7 +3775,7 @@ class MainWindow(QMainWindow):
         self.empty_lbl.setVisible(not self._task_rows)
 
     def _add_task_row(self, task: DownloadTask) -> None:
-        row = TaskRow(task, self.ambient,
+        row = TaskRow(task,
                       self._on_task_pause_resume, self._on_task_cancel,
                       self.rows_holder)
         # stretch 占位之前插入，保持新增任务在最下、stretch 收尾
@@ -4315,7 +4316,7 @@ class MainWindow(QMainWindow):
             return
         self._tip_win = TipDialogQ(
             self.ambient, self.theme.palette, self.tip_store,
-            on_record=lambda msg: self.bus.tip_record.emit(msg),
+            on_record=self.bus.tip_record.emit,
             on_view_records=self._open_tip_records,
             on_close=lambda: setattr(self, "_tip_win", None),
         )

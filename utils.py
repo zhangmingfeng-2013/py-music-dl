@@ -9,7 +9,6 @@ import os
 import re
 import sys
 import logging
-from typing import Optional
 from pathlib import Path
 
 # ---- 日志 ----
@@ -198,9 +197,8 @@ def quality_tier(quality: str = "", url: str = "") -> str:
     if q in ("320K", "HQ", "320", "320KBPS"):
         return TIER_HQ
     # 纯码率标签（128K/192KBPS 等）按码率判定
-    import re as _re
     if q:
-        m_label = _re.fullmatch(r"(\d{2,3})\s*(?:k|kbps)?", q, _re.IGNORECASE)
+        m_label = re.fullmatch(r"(\d{2,3})\s*(?:k|kbps)?", q, re.IGNORECASE)
         if m_label:
             kbps = int(m_label.group(1))
             if kbps >= 320:
@@ -208,7 +206,7 @@ def quality_tier(quality: str = "", url: str = "") -> str:
             if kbps >= 96:
                 return TIER_STANDARD
     # 链接中带明确码率参数时按码率判定
-    m = _re.search(r"[?&/](?:br|bitrate|bk)=?(\d{2,3})(?:k)?(?:bps)?(?:&|$|/)",
+    m = re.search(r"[?&/](?:br|bitrate|bk)=?(\d{2,3})(?:k)?(?:bps)?(?:&|$|/)",
                    (url or "").lower())
     if m:
         kbps = int(m.group(1))

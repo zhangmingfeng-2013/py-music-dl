@@ -727,7 +727,8 @@ def register_palette_aware(cb: Callable[[Palette], None]) -> None:
 
 
 def apply_palette(p: Palette) -> None:
-    global PAL
+    # PAL 为模块级当前调色板（全局设计），观察者经 register_palette_aware 注册
+    global PAL  # pylint: disable=global-statement
     PAL = p
     for cb in _palette_aware:
         try:
@@ -742,11 +743,12 @@ def system_prefers_dark() -> bool:
         if sys.platform == "darwin":
             out = subprocess.run(
                 ["defaults", "read", "-g", "AppleInterfaceStyle"],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True, text=True, timeout=2, check=False,
             )
             return out.stdout.strip() == "Dark"
         if sys.platform == "win32":
-            import winreg  # type: ignore
+            # winreg 仅 Windows 存在，macOS/Linux 静态检查误报
+            import winreg  # type: ignore # pylint: disable=import-error
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
                 r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
@@ -754,7 +756,7 @@ def system_prefers_dark() -> bool:
             return bool(winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0)
         out = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
-            capture_output=True, text=True, timeout=2,
+            capture_output=True, text=True, timeout=2, check=False,
         )
         return "dark" in out.stdout
     except Exception:
@@ -786,7 +788,7 @@ class Card:
         self.canvas.bind("<Configure>", self._on_canvas_resize)
         register_palette_aware(self.set_palette)
 
-    def _on_inner_resize(self, event: tk.Event) -> None:
+    def _on_inner_resize(self, _event: tk.Event) -> None:
         # 只跟随 inner 的【请求】高度；实际高度会被画布反向约束,
         # 直接用 event.height 会形成「收缩→再请求更小」的连锁反应
         req_h = self.inner.winfo_reqheight()
@@ -794,7 +796,7 @@ class Card:
             self._last_req_h = req_h
             self.canvas.configure(height=req_h + 2 * self.pad_y)
 
-    def _on_canvas_resize(self, event: tk.Event) -> None:
+    def _on_canvas_resize(self, _event: tk.Event) -> None:
         self._draw()
 
     def _draw(self) -> None:
@@ -909,7 +911,7 @@ class PillButton(tk.Canvas):
         self._selected = selected
         self._draw()
 
-    def set_palette(self, p: Palette) -> None:
+    def set_palette(self, _p: Palette) -> None:
         self.configure(bg=self._base_bg())
         self._draw()
 
@@ -1074,7 +1076,7 @@ class IconButton(tk.Canvas):
         self._visible = visible
         self._draw()
 
-    def set_palette(self, p: Palette) -> None:
+    def set_palette(self, _p: Palette) -> None:
         self.configure(bg=self._base_bg())
         self._draw()
 
@@ -1280,7 +1282,7 @@ class Select(PillButton):
     def _refresh_text(self) -> None:
         self.set_text(self._value)
 
-    def _popup(self, event: tk.Event) -> None:
+    def _popup(self, _event: tk.Event) -> None:
         if self._disabled:
             return
         p = PAL
@@ -3031,7 +3033,7 @@ class MusicDownloaderGUI:
 
     def _open_download_dir(self) -> None:
         if os.path.exists(self.download_dir):
-            subprocess.run(["open", self.download_dir])
+            subprocess.run(["open", self.download_dir], check=False)
 
     def _clear_history(self) -> None:
         self.search_history.clear()
@@ -3389,7 +3391,7 @@ def main() -> None:
     demo = "--demo" in sys.argv
     ensure_config_files()  # 启动即创建缺失的 settings/历史/打赏 JSON 文件
     root = tk.Tk()
-    app = MusicDownloaderGUI(root, demo=demo)
+    MusicDownloaderGUI(root, demo=demo)  # 控件树由 root 持有引用
     root.mainloop()
 
 

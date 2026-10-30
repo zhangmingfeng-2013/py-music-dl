@@ -142,7 +142,7 @@ class DownloadTask:
     # 内部控制
     # _pause_event 初始为 set（不阻塞），pause 时 clear（阻塞 wait）
     _pause_event: threading.Event = field(
-        default_factory=lambda: threading.Event(), repr=False
+        default_factory=threading.Event, repr=False
     )
     _cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _speed_ts: float = field(default=0.0, repr=False)

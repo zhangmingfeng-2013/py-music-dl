@@ -15,8 +15,7 @@ from typing import Any
 from api import search_all_platforms, prefetch_quality, get_song_detail
 from downloader import DownloadQueue, DownloadTask
 from utils import (
-    log, ensure_download_dir, format_size,
-    format_progress_bar, DEFAULT_DOWNLOAD_DIR,
+    ensure_download_dir, format_progress_bar, DEFAULT_DOWNLOAD_DIR,
 )
 
 
@@ -54,8 +53,8 @@ def _multi_select(max_num: int) -> list[int]:
     while True:
         try:
             inp = input(
-                f"\n请输入要下载的歌曲序号，多选用逗号分隔（如 1,3,5-8），"
-                f"输入 all 全选，输入 0 退出："
+                "\n请输入要下载的歌曲序号，多选用逗号分隔（如 1,3,5-8），"
+                "输入 all 全选，输入 0 退出："
             ).strip()
             if inp == "0":
                 return []

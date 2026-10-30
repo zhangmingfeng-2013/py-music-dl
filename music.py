@@ -121,7 +121,7 @@ class MusicAPI:
             print(f"    [✗] 咪咕搜索失败: {e}")
             return []
         except json.JSONDecodeError:
-            print(f"    [✗] 咪咕API返回非JSON内容（可能暂时不可用）")
+            print("    [✗] 咪咕API返回非JSON内容（可能暂时不可用）")
             return []
 
     @staticmethod
@@ -439,12 +439,12 @@ class BS4Demo:
         3. 演示 find / find_all / select / get_text 等常用API
         """
         url = "http://qjjlb.quanjian.com.cn/musicdl/"
-        print(f"\n[*] --- BS4 演示：抓取并解析音乐站首页 ---")
+        print("\n[*] --- BS4 演示：抓取并解析音乐站首页 ---")
         print(f"    目标URL: {url}")
 
         try:
             # 步骤1：获取 HTML
-            print(f"    [1/5] 用 requests.get() 发起请求...")
+            print("    [1/5] 用 requests.get() 发起请求...")
             resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
             resp.raise_for_status()
             resp.encoding = "utf-8"
@@ -452,17 +452,17 @@ class BS4Demo:
             print(f"        获取到 HTML，共 {len(html)} 个字符")
 
             # 步骤2：创建 BeautifulSoup 对象
-            print(f"    [2/5] 用 BeautifulSoup(html, 'lxml') 解析...")
+            print("    [2/5] 用 BeautifulSoup(html, 'lxml') 解析...")
             soup = BeautifulSoup(html, "lxml")
 
             # 步骤3：find — 查找第一个匹配的元素
-            print(f"    [3/5] 使用 find() 查找关键元素:")
+            print("    [3/5] 使用 find() 查找关键元素:")
             title_tag = soup.find("title")
             if title_tag:
                 print(f"        页面标题: {title_tag.get_text(strip=True)}")
 
             # 步骤4：find_all — 查找所有匹配的元素
-            print(f"    [4/5] 使用 find_all() 统计页面结构:")
+            print("    [4/5] 使用 find_all() 统计页面结构:")
             tags_to_check = ["script", "link", "meta", "div", "span", "input", "button"]
             for tag in tags_to_check:
                 count = len(soup.find_all(tag))
@@ -470,7 +470,7 @@ class BS4Demo:
                     print(f"        <{tag}>: {count} 个")
 
             # 步骤5：select — CSS 选择器
-            print(f"    [5/5] 使用 select() CSS选择器查找元素:")
+            print("    [5/5] 使用 select() CSS选择器查找元素:")
             # 查找所有带 class 属性的元素
             elements_with_class = soup.select("[class]")
             print(f"        带 class 属性的元素: {len(elements_with_class)} 个")
@@ -496,7 +496,6 @@ class BS4Demo:
         BeautifulSoup 核心 API 速览
         用一段示例 HTML 演示 bs4 的常用操作
         """
-        pass
 
 
 # ===================== 下载管理器 =====================
@@ -668,11 +667,11 @@ class MusicDownloader:
             detail = self.api.get_kuwo_detail(song)
 
         if detail and detail.get("audio_url"):
-            print(f"    [✓] 获取到下载链接")
+            print("    [✓] 获取到下载链接")
             print(f"    音质: {detail.get('quality', '?')}")
             return detail
 
-        print(f"    [✗] 未获取到下载链接")
+        print("    [✗] 未获取到下载链接")
         return None
 
     def download_mp3(self, title, artist, audio_url, quality="",

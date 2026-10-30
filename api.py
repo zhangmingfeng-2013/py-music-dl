@@ -601,7 +601,7 @@ def _lrclib_lyrics(title: str, artist: str = "",
     """lrclib.net 免费歌词库：优先精确匹配，再退化到搜索。"""
     if not title:
         return None
-    headers = {**_HEADERS, "Accept": "application/json"}
+    headers = {**HEADERS, "Accept": "application/json"}
 
     def _pick(item: dict) -> str | None:
         if not isinstance(item, dict):
