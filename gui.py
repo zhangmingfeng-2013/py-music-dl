@@ -23,7 +23,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import os
 import subprocess
@@ -31,17 +30,20 @@ import sys
 import threading
 import time
 import tkinter as tk
-from dataclasses import dataclass
 from tkinter import ttk, messagebox, filedialog, font as tkfont
 from typing import Any, Callable, Optional
 
 from api import PLATFORM_NAMES, search_all_platforms, get_song_detail
 from downloader import DownloadQueue, DownloadTask, TaskStatus
-from naming import DEFAULT_TEMPLATE, validate_template
-from utils import (
-    ensure_download_dir, format_size, DEFAULT_DOWNLOAD_DIR,
-    resource_path, user_config_path,
+from config import (
+    ArtistHistory, SearchHistory, TipRecordStore,
+    TIP_METHODS, TIP_QR_FILES, ensure_config_files,
+    load_settings, save_settings,
 )
+from theme import (
+    Palette, SCHEMES, THEME_MODES, blend, mix, system_prefers_dark,
+)
+from utils import DEFAULT_DOWNLOAD_DIR, ensure_download_dir, format_size
 
 # ---- 常量 ----
 
@@ -58,62 +60,6 @@ MONO_FONT = "SF Mono"
 APP_TITLE = "拾音"
 APP_VERSION = "v3.1"
 APP_SUBTITLE = "多平台聚合 · 咪咕 网易云 QQ音乐 酷我"
-
-SETTINGS_FILE = user_config_path("settings.json")
-DEFAULT_SETTINGS = {
-    "scheme": "liquid", "theme_mode": "auto",
-    # 下载限速（KB/s，0 = 不限速）
-    "per_task_speed": 0, "global_speed": 0,
-    # 下载后处理
-    "convert_mode": "off",   # off / mp3 / flac
-    "mp3_bitrate": 320,      # 128 / 192 / 320
-    "write_tags": True,      # 写入标题/歌手/专辑/年份
-    "embed_cover": True,     # 内嵌专辑封面
-    "save_lrc": True,        # 同名 .lrc 文件
-    "embed_lyrics": True,    # 歌词内嵌到音频标签
-    "whisper_fallback": True,  # API 歌词缺失时 Whisper 语音识别兜底
-    # 自定义文件命名模板（占位符规则见 naming.py）
-    "naming_template": DEFAULT_TEMPLATE,
-}
-
-# ---- 历史记录 / 开发者打赏 ----
-SEARCH_HISTORY_FILE = user_config_path("search_history.json")
-ARTIST_HISTORY_FILE = user_config_path("artist_history.json")
-TIP_RECORDS_FILE = user_config_path("tip_records.json")
-TIP_QR_FILES: dict[str, str] = {
-    "wechat": resource_path("assets", "tip", "wechat.png"),
-    "alipay": resource_path("assets", "tip", "alipay.png"),
-}
-TIP_METHODS: dict[str, str] = {"wechat": "微信支付", "alipay": "支付宝"}
-TIP_MAX_RECORDS = 500
-
-# ==================== 色彩工具 ====================
-
-
-def _rgb(hex_color: str) -> tuple[int, int, int]:
-    hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
-
-
-def _hex(r: int, g: int, b: int) -> str:
-    return f"#{max(0, min(255, int(r))):02x}{max(0, min(255, int(g))):02x}{max(0, min(255, int(b))):02x}"
-
-
-def mix(a: str, b: str, t: float) -> str:
-    """a 向 b 混合 t（0~1）,t 越大越接近 b"""
-    ar, ag, ab = _rgb(a)
-    br, bg, bb = _rgb(b)
-    return _hex(
-        ar + (br - ar) * t,
-        ag + (bg - ag) * t,
-        ab + (bb - ab) * t,
-    )
-
-
-def blend(over: str, under: str, alpha: float) -> str:
-    """将 over 以 alpha 透明度叠在 under 上（模拟半透明材质）"""
-    return mix(under, over, alpha)
-
 
 # ==================== 连续圆角（squircle）=============
 
@@ -251,31 +197,31 @@ def draw_glyph(
     """
     lw = max(1.5 * s, 1.0)
 
-    def X(x: float) -> float:
+    def sx(x: float) -> float:
         return cx + x * s
 
-    def Y(y: float) -> float:
+    def sy(y: float) -> float:
         return cy + y * s
 
     def line(x1: float, y1: float, x2: float, y2: float, width: float = lw) -> None:
         cv.create_line(
-            X(x1), Y(y1), X(x2), Y(y2), fill=fg, width=width,
+            sx(x1), sy(y1), sx(x2), sy(y2), fill=fg, width=width,
             capstyle=tk.ROUND,
         )
 
     def poly(points: list[tuple[float, float]]) -> None:
         cv.create_polygon(
-            [v for x, y in points for v in (X(x), Y(y))],
+            [v for x, y in points for v in (sx(x), sy(y))],
             fill=fg, outline="", smooth=False,
         )
 
     if name == "note":                       # 八分音符 ♪
-        cv.create_oval(X(-5.2), Y(2.4), X(-0.6), Y(6.2), fill=fg, outline="")
+        cv.create_oval(sx(-5.2), sy(2.4), sx(-0.6), sy(6.2), fill=fg, outline="")
         line(-2.9, 3.2, -2.9, -5.2)
         poly([(-2.9, -5.2), (3.2, -3.0), (3.2, -0.2), (-2.9, -2.4)])
     elif name == "search":
         cv.create_oval(
-            X(-5.2), Y(-5.2), X(1.2), Y(1.2),
+            sx(-5.2), sy(-5.2), sx(1.2), sy(1.2),
             fill="", outline=fg, width=lw,
         )
         line(1.8, 1.8, 5.2, 5.2)
@@ -291,7 +237,7 @@ def draw_glyph(
         line(3, -3.2, 2.3, 4.4)
         line(-2.3, 4.4, 2.3, 4.4)
     elif name == "clock":
-        cv.create_oval(X(-4.8), Y(-4.8), X(4.8), Y(4.8), fill="", outline=fg, width=lw)
+        cv.create_oval(sx(-4.8), sy(-4.8), sx(4.8), sy(4.8), fill="", outline=fg, width=lw)
         line(0, 0, 0, -3.0)
         line(0, 0, 2.1, 0.8)
     elif name == "download":
@@ -302,8 +248,8 @@ def draw_glyph(
         line(-5.2, 5.0, 5.2, 5.0)
         line(5.2, 2.0, 5.2, 5.0)
     elif name == "pause":
-        cv.create_rectangle(X(-4.4), Y(-5), X(-1.2), Y(5), fill=fg, outline="")
-        cv.create_rectangle(X(1.2), Y(-5), X(4.4), Y(5), fill=fg, outline="")
+        cv.create_rectangle(sx(-4.4), sy(-5), sx(-1.2), sy(5), fill=fg, outline="")
+        cv.create_rectangle(sx(1.2), sy(-5), sx(4.4), sy(5), fill=fg, outline="")
     elif name == "play":
         poly([(-3.6, -5.2), (5.2, 0), (-3.6, 5.2)])
     elif name == "close":
@@ -314,12 +260,12 @@ def draw_glyph(
         line(0, 1.2, 3.2, -2.2)
     elif name == "moon":
         cv.create_arc(
-            X(-6), Y(-7), X(7), Y(7),
+            sx(-6), sy(-7), sx(7), sy(7),
             start=90, extent=180, fill=fg, outline="", style=tk.PIESLICE,
         )
-        cv.create_oval(X(-7), Y(-7), X(7), Y(7), fill="", outline=fg, width=lw)
+        cv.create_oval(sx(-7), sy(-7), sx(7), sy(7), fill="", outline=fg, width=lw)
     elif name == "sun":
-        cv.create_oval(X(-3), Y(-3), X(3), Y(3), fill="", outline=fg, width=lw)
+        cv.create_oval(sx(-3), sy(-3), sx(3), sy(3), fill="", outline=fg, width=lw)
         for i in range(8):
             a = i * math.pi / 4
             x1, y1 = math.cos(a) * 4.4, math.sin(a) * 4.4
@@ -327,13 +273,13 @@ def draw_glyph(
             line(x1, y1, x2, y2)
     elif name == "half":                    # 自动模式：半明半暗
         cv.create_arc(
-            X(-6), Y(-6), X(6), Y(6),
+            sx(-6), sy(-6), sx(6), sy(6),
             start=90, extent=180, fill=fg, outline="", style=tk.PIESLICE,
         )
-        cv.create_oval(X(-6), Y(-6), X(6), Y(6), fill="", outline=fg, width=lw)
+        cv.create_oval(sx(-6), sy(-6), sx(6), sy(6), fill="", outline=fg, width=lw)
     elif name == "heart":                   # 打赏：双圆弧瓣 + 三角身
-        cv.create_oval(X(-6.0), Y(-5.4), X(-0.2), Y(1.4), fill=fg, outline="")
-        cv.create_oval(X(0.2), Y(-5.4), X(6.0), Y(1.4), fill=fg, outline="")
+        cv.create_oval(sx(-6.0), sy(-5.4), sx(-0.2), sy(1.4), fill=fg, outline="")
+        cv.create_oval(sx(0.2), sy(-5.4), sx(6.0), sy(1.4), fill=fg, outline="")
         poly([(-5.4, -0.2), (5.4, -0.2), (0, 6.2)])
 
 
@@ -425,298 +371,8 @@ def _truncate(text: str, fnt: tkfont.Font, max_w: float) -> str:
 
 # ==================== 主题（自适应明暗）=============
 
-
-@dataclass(frozen=True)
-class Palette:
-    name: str
-    scheme: str
-    dark: bool
-    bg: str             # 窗口背景
-    card: str           # 卡片（半透明材质视觉）
-    border: str         # 发丝线
-    divider: str        # 分割线
-    input_bg: str       # 输入区
-    track: str          # 进度轨道
-    text: str
-    text2: str
-    text3: str
-    accent: str
-    accent_hover: str
-    accent_press: str
-    accent_soft: str
-    accent_soft_hover: str
-    hover_card: str     # 卡片上的悬浮层
-    hover_bg: str       # 背景上的悬浮层
-    danger: str
-    danger_soft: str
-    row_alt: str        # 表格斑马纹
-    status: dict[str, str]
-    # ---- 几何令牌（连续圆角体系,按方案统一下发）----
-    radius_card: int = 18       # 卡片圆角
-    radius_control: int = -1    # 控件圆角；-1 表示全圆角胶囊
-    radius_track: float = 3.0   # 进度条圆角
-    radius_icon: int = 10       # 品牌图标圆角
-    accent_contrast: str = "#FFFFFF"   # 主色之上的文字/符号色
-    zebra: bool = True          # 结果表是否使用斑马纹
-    # ---- 液态玻璃材质令牌 ----
-    glass: bool = False         # 是否启用玻璃质感（高光/光晕/材质叠层）
-    glass_strength: float = 0.0 # 质感强度 0~1（liquid=1,aurora=0.65,mono=0）
-
-
-def _make_palette(
-    scheme: str, dark: bool, *,
-    bg: str, card: str,
-    text: str, text2: str, text3: str,
-    accent: str, status: dict[str, str],
-    accent_contrast: str = "#FFFFFF",
-    input_bg: Optional[str] = None,
-    row_alt: Optional[str] = None,
-    radius_card: int = 18, radius_control: int = -1,
-    radius_track: float = 3.0, radius_icon: int = 10,
-    zebra: bool = True, border_t: float = 0.14,
-    glass: bool = False, glass_strength: float = 0.0,
-) -> Palette:
-    danger = "#FF453A" if dark else "#FF3B30"
-    # 语义统一：以下均为“基底色（card/bg）混入少量 text 压暗”,
-    # mix(base, toward, t) 表示从 base 向 toward 走 t
-    return Palette(
-        name="深色" if dark else "浅色",
-        scheme=scheme,
-        dark=dark,
-        bg=bg,
-        card=card,
-        border=mix(card, text, border_t),
-        divider=mix(card, text, 0.08),
-        input_bg=input_bg or ("#FFFFFF" if not dark else blend("#FFFFFF", bg, 0.08)),
-        track=mix(card, text, 0.09),
-        text=text, text2=text2, text3=text3,
-        accent=accent,
-        accent_hover=mix(accent, "#FFFFFF", 0.16),
-        accent_press=mix(accent, "#000000", 0.14),
-        accent_soft=blend(accent, card, 0.12),
-        accent_soft_hover=blend(accent, card, 0.20),
-        hover_card=mix(card, text, 0.05),
-        hover_bg=mix(bg, text, 0.06),
-        danger=danger,
-        danger_soft=blend(danger, card, 0.10),
-        row_alt=row_alt or (card if not zebra else mix(card, text, 0.028)),
-        status=status,
-        radius_card=radius_card,
-        radius_control=radius_control,
-        radius_track=radius_track,
-        radius_icon=radius_icon,
-        accent_contrast=accent_contrast,
-        zebra=zebra,
-        glass=glass,
-        glass_strength=glass_strength,
-    )
-
-
-# ---- 方案 A：Liquid 液态玻璃（对齐 macOS / iOS 26）----
-
-def _liquid_palette(dark: bool) -> Palette:
-    if not dark:
-        return _make_palette(
-            "liquid", False,
-            bg="#F2F2F7",
-            card=blend("#FFFFFF", "#F2F2F7", 0.68),
-            text="#1C1C1E", text2="#6E6E73", text3="#AEAEB4",
-            accent="#0A84FF",
-            status={
-                "pending": "#8E8E93", "fetching": "#32ADE6",
-                "downloading": "#0A84FF", "paused": "#FF9F0A",
-                "completed": "#30B55A", "failed": "#FF3B30",
-                "cancelled": "#8E8E93",
-            },
-            radius_card=18, radius_icon=10,
-            glass=True, glass_strength=1.0,
-        )
-    return _make_palette(
-        "liquid", True,
-        bg="#17171C",
-        card=blend("#2C2C2E", "#17171C", 0.55),
-        text="#F2F2F7", text2="#98989D", text3="#6A6A72",
-        accent="#0A84FF",
-        status={
-            "pending": "#98989D", "fetching": "#64D2FF",
-            "downloading": "#0A84FF", "paused": "#FFD60A",
-            "completed": "#30D158", "failed": "#FF453A",
-            "cancelled": "#98989D",
-            },
-            radius_card=18, radius_icon=10,
-            glass=True, glass_strength=1.0,
-        )
-
-
-# ---- 方案 B：Mono 单色极简（对齐专业创作工具）----
-
-def _mono_palette(dark: bool) -> Palette:
-    if not dark:
-        return _make_palette(
-            "mono", False,
-            bg="#F6F6F4",
-            card="#FFFFFF",
-            text="#1D1D1F", text2="#6E6E73", text3="#A2A2A0",
-            accent="#1D1D1F", accent_contrast="#FFFFFF",
-            status={
-                "pending": "#8E8E93", "fetching": "#6A8CA8",
-                "downloading": "#3A3A3C", "paused": "#C7831C",
-                "completed": "#3D7A52", "failed": "#D14B42",
-                "cancelled": "#8E8E93",
-            },
-            radius_card=10, radius_control=8, radius_track=2.0,
-            radius_icon=8, zebra=False, border_t=0.18,
-        )
-    return _make_palette(
-        "mono", True,
-        bg="#101010",
-        card="#1C1C1E",
-        text="#ECECEE", text2="#9A9AA0", text3="#5E5E64",
-        accent="#ECECEC", accent_contrast="#111112",
-        input_bg=blend("#FFFFFF", "#101010", 0.07),
-        status={
-            "pending": "#9A9AA0", "fetching": "#7FA9C6",
-            "downloading": "#D8D8DE", "paused": "#D9A344",
-            "completed": "#4E9C68", "failed": "#E06B60",
-            "cancelled": "#9A9AA0",
-        },
-        radius_card=10, radius_control=8, radius_track=2.0,
-        radius_icon=8, zebra=False, border_t=0.18,
-    )
-
-
-# ---- 方案 C：Aurora 极光柔彩（对齐多彩消费硬件）----
-
-def _aurora_palette(dark: bool) -> Palette:
-    if not dark:
-        bg, accent = "#F4F1FB", "#7C5CFF"
-        card = blend("#FFFFFF", bg, 0.72)
-        return _make_palette(
-            "aurora", False,
-            bg=bg, card=card,
-            text="#221E2E", text2="#6E6878", text3="#ABA5B8",
-            accent=accent,
-            status={
-                "pending": "#9A94A8", "fetching": "#2FB5C9",
-                "downloading": accent, "paused": "#FF9F0A",
-                "completed": "#2EAD6B", "failed": "#FF4D4F",
-                "cancelled": "#9A94A8",
-            },
-            row_alt=blend(accent, card, 0.05),
-            radius_card=22, radius_track=3.5, radius_icon=11,
-            glass=True, glass_strength=0.65,
-        )
-    bg, accent = "#151220", "#A084FF"
-    card = blend("#2A2440", bg, 0.60)
-    return _make_palette(
-        "aurora", True,
-        bg=bg, card=card,
-        text="#F1EEF9", text2="#A79FBA", text3="#6E6680",
-        accent=accent,
-        status={
-            "pending": "#8E87A0", "fetching": "#5AD0E6",
-            "downloading": accent, "paused": "#FFD60A",
-            "completed": "#38D07A", "failed": "#FF5A60",
-            "cancelled": "#8E87A0",
-        },
-        row_alt=blend(accent, card, 0.07),
-        radius_card=22, radius_track=3.5, radius_icon=11,
-        glass=True, glass_strength=0.65,
-    )
-
-
-# key → 展示名 / 明暗调色板
-SCHEMES: dict[str, dict[str, Any]] = {
-    "liquid": {"name": "液态玻璃 Liquid", "light": _liquid_palette(False), "dark": _liquid_palette(True)},
-    "mono":   {"name": "单色极简 Mono",   "light": _mono_palette(False),   "dark": _mono_palette(True)},
-    "aurora": {"name": "极光柔彩 Aurora", "light": _aurora_palette(False), "dark": _aurora_palette(True)},
-}
-
-THEME_MODES = (("auto", "自动（跟随系统）"), ("light", "浅色"), ("dark", "深色"))
-
 PAL: Palette = SCHEMES["liquid"]["light"]
 """当前生效的调色板（全局）"""
-
-
-def load_settings() -> dict[str, Any]:
-    """读取界面偏好（设计方案 / 外观模式 / 下载限速）"""
-    data = dict(DEFAULT_SETTINGS)
-    try:
-        if os.path.exists(SETTINGS_FILE):
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-            if isinstance(saved, dict):
-                if saved.get("scheme") in SCHEMES:
-                    data["scheme"] = saved["scheme"]
-                if saved.get("theme_mode") in ("auto", "light", "dark"):
-                    data["theme_mode"] = saved["theme_mode"]
-                for key in ("per_task_speed", "global_speed"):
-                    try:
-                        val = int(saved.get(key, 0))
-                        data[key] = max(0, val)
-                    except (TypeError, ValueError):
-                        pass
-                # 音频后处理设置
-                if saved.get("convert_mode") in ("off", "mp3", "flac"):
-                    data["convert_mode"] = saved["convert_mode"]
-                try:
-                    bitrate = int(saved.get("mp3_bitrate", 320))
-                    if bitrate in (128, 192, 320):
-                        data["mp3_bitrate"] = bitrate
-                except (TypeError, ValueError):
-                    pass
-                for key in ("write_tags", "embed_cover", "save_lrc",
-                            "embed_lyrics", "whisper_fallback"):
-                    if isinstance(saved.get(key), bool):
-                        data[key] = saved[key]
-                # 命名模板：字符串且校验通过才采用，否则保留默认
-                if isinstance(saved.get("naming_template"), str):
-                    ok, _err, _used = validate_template(saved["naming_template"])
-                    if ok:
-                        data["naming_template"] = saved["naming_template"]
-    except Exception:
-        pass
-    return data
-
-
-def save_settings(data: dict[str, Any]) -> None:
-    """合并写入：保留文件中已有的其他键（主题切换不会清掉限速等设置）"""
-    merged: dict[str, Any] = {}
-    try:
-        if os.path.exists(SETTINGS_FILE):
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                old = json.load(f)
-            if isinstance(old, dict):
-                merged.update(old)
-    except Exception:
-        pass
-    merged.update(data)
-    try:
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-
-def ensure_config_files() -> None:
-    """启动时创建缺失的 JSON 配置文件（已存在则不覆盖，失败静默跳过）。"""
-    targets = (
-        (SETTINGS_FILE, DEFAULT_SETTINGS),
-        (SEARCH_HISTORY_FILE, []),
-        (ARTIST_HISTORY_FILE, []),
-        (TIP_RECORDS_FILE, []),
-    )
-    for path, payload in targets:
-        try:
-            if os.path.exists(path):
-                continue
-            directory = os.path.dirname(path) or "."
-            os.makedirs(directory, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
-
 
 _palette_aware: list[Callable[[Palette], None]] = []
 
@@ -727,6 +383,7 @@ def register_palette_aware(cb: Callable[[Palette], None]) -> None:
 
 
 def apply_palette(p: Palette) -> None:
+    """切换全局调色板并通知所有已注册控件重绘。"""
     # PAL 为模块级当前调色板（全局设计），观察者经 register_palette_aware 注册
     global PAL  # pylint: disable=global-statement
     PAL = p
@@ -735,32 +392,6 @@ def apply_palette(p: Palette) -> None:
             cb(p)
         except tk.TclError:
             pass
-
-
-def system_prefers_dark() -> bool:
-    """探测系统外观是否深色"""
-    try:
-        if sys.platform == "darwin":
-            out = subprocess.run(
-                ["defaults", "read", "-g", "AppleInterfaceStyle"],
-                capture_output=True, text=True, timeout=2, check=False,
-            )
-            return out.stdout.strip() == "Dark"
-        if sys.platform == "win32":
-            # winreg 仅 Windows 存在，macOS/Linux 静态检查误报
-            import winreg  # type: ignore # pylint: disable=import-error
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-            )
-            return bool(winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0)
-        out = subprocess.run(
-            ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
-            capture_output=True, text=True, timeout=2, check=False,
-        )
-        return "dark" in out.stdout
-    except Exception:
-        return False
 
 
 # ==================== 基础组件 ====================
@@ -1599,186 +1230,6 @@ class TaskRow(tk.Canvas):
 # ==================== 历史管理 ====================
 
 
-class SearchHistory:
-    """搜索历史管理类（持久化到 JSON 文件）"""
-
-    def __init__(self, history_file: str = SEARCH_HISTORY_FILE, max_items: int = 20):
-        self.history_file = history_file
-        self.max_items = max_items
-        self.history: list[str] = self._load_history()
-
-    def _load_history(self) -> list[str]:
-        if os.path.exists(self.history_file):
-            try:
-                with open(self.history_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        return data
-            except Exception:
-                pass
-        return []
-
-    def _save_history(self) -> None:
-        try:
-            with open(self.history_file, "w", encoding="utf-8") as f:
-                json.dump(self.history, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    def add(self, keyword: str) -> None:
-        if not keyword or not keyword.strip():
-            return
-        keyword = keyword.strip()
-        if keyword in self.history:
-            self.history.remove(keyword)
-        self.history.insert(0, keyword)
-        if len(self.history) > self.max_items:
-            self.history = self.history[:self.max_items]
-        self._save_history()
-
-    def get_all(self) -> list[str]:
-        return self.history.copy()
-
-    def clear(self) -> None:
-        self.history = []
-        self._save_history()
-
-
-class ArtistHistory:
-    """歌手历史管理类（持久化到 artist_history.json）"""
-
-    def __init__(self, history_file: str = ARTIST_HISTORY_FILE, max_items: int = 50):
-        self.history_file = history_file
-        self.max_items = max_items
-        self.history: list[str] = self._load_history()
-
-    def _load_history(self) -> list[str]:
-        if os.path.exists(self.history_file):
-            try:
-                with open(self.history_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        return data
-            except Exception:
-                pass
-        return []
-
-    def _save_history(self) -> None:
-        try:
-            with open(self.history_file, "w", encoding="utf-8") as f:
-                json.dump(self.history, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    def add(self, artist: str) -> None:
-        if not artist or not artist.strip():
-            return
-        artist = artist.strip()
-        if artist in self.history:
-            self.history.remove(artist)
-        self.history.insert(0, artist)
-        if len(self.history) > self.max_items:
-            self.history = self.history[:self.max_items]
-        self._save_history()
-
-    def get_all(self) -> list[str]:
-        return self.history.copy()
-
-    def clear(self) -> None:
-        self.history = []
-        self._save_history()
-
-
-# ==================== 开发者打赏 ====================
-
-
-class TipRecordStore:
-    """打赏登记记录：仅本地 JSON,原子写入；文件损坏时备份后重置。
-
-    安全说明：个人收款码无法做服务端验单,记录完全来自用户在界面上的
-    确认操作,程序不发起任何网络支付请求。打赏金额由用户在手机端自行
-    输入,本地不记录金额。
-    """
-
-    VALID_STATUS = ("success", "failed")
-
-    def __init__(self, path: str = TIP_RECORDS_FILE):
-        self.path = path
-        self.records: list[dict[str, Any]] = self._load()
-
-    def _load(self) -> list[dict[str, Any]]:
-        if not os.path.exists(self.path):
-            return []
-        try:
-            with open(self.path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, list):
-                raise ValueError("tip records root must be a list")
-            clean: list[dict[str, Any]] = []
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                rid = str(item.get("id", ""))
-                ts = item.get("ts")
-                method = item.get("method")
-                status = item.get("status")
-                # 仅保留四个必要字段；旧版本的 amount 字段直接丢弃
-                if (not rid or not isinstance(ts, (int, float))
-                        or method not in TIP_METHODS
-                        or status not in self.VALID_STATUS):
-                    continue
-                clean.append({
-                    "id": rid, "ts": int(ts),
-                    "method": method, "status": status,
-                })
-            return clean[:TIP_MAX_RECORDS]
-        except Exception:
-            # 损坏文件不删除,备份留证后从空开始
-            try:
-                os.replace(self.path, self.path + ".bak")
-            except OSError:
-                pass
-            return []
-
-    def _save(self) -> bool:
-        try:
-            directory = os.path.dirname(self.path) or "."
-            os.makedirs(directory, exist_ok=True)
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self.records, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self.path)
-            return True
-        except OSError:
-            return False
-
-    def add(self, method: str, status: str) -> Optional[dict[str, Any]]:
-        if method not in TIP_METHODS or status not in self.VALID_STATUS:
-            return None
-        record = {
-            "id": f"tip-{int(time.time() * 1000)}-{len(self.records)}",
-            "ts": int(time.time()),
-            "method": method,
-            "status": status,
-        }
-        self.records.insert(0, record)
-        if len(self.records) > TIP_MAX_RECORDS:
-            self.records = self.records[:TIP_MAX_RECORDS]
-        self._save()
-        return record
-
-    def clear(self) -> None:
-        self.records = []
-        self._save()
-
-    def summary(self) -> tuple[int, int]:
-        """返回（成功笔数, 未完成笔数）。"""
-        ok_n = sum(1 for r in self.records if r["status"] == "success")
-        return ok_n, len(self.records) - ok_n
-
-
 class GlassyDialog(tk.Toplevel):
     """弹窗基类：光晕背板 + 玻璃卡片 + 开启淡入位移 / 关闭淡出。"""
 
@@ -2324,7 +1775,12 @@ class MusicDownloaderGUI:
         self._tip_win: Optional[TipDialog] = None
         self._tip_records_win: Optional[TipRecordsDialog] = None
 
-        self.download_dir: str = ensure_download_dir(DEFAULT_DOWNLOAD_DIR)
+        try:
+            self.download_dir = ensure_download_dir(
+                self.settings.get("download_dir") or DEFAULT_DOWNLOAD_DIR
+            )
+        except OSError:
+            self.download_dir = ensure_download_dir(DEFAULT_DOWNLOAD_DIR)
 
         self._queue: Optional[DownloadQueue] = None
         self._task_rows: dict[str, TaskRow] = {}
@@ -3286,9 +2742,10 @@ class MusicDownloaderGUI:
             return
         active = sum(
             1 for t in self._queue.tasks
-            if t.status.value in ("pending", "fetching", "downloading", "paused")
+            if t.status.is_running
+            or t.status in (TaskStatus.PENDING, TaskStatus.PAUSED)
         )
-        if active == 0:
+        if active == 0 and self._queue_running:
             self._queue_running = False
             self._log("下载队列全部完成")
             self._set_status("下载队列全部完成", "ok")
@@ -3302,11 +2759,9 @@ class MusicDownloaderGUI:
             return
 
         tasks = self._queue.tasks if self._queue else []
-        has_active = any(t.status.value in ("fetching", "downloading") for t in tasks)
-        has_paused = any(t.status.value == "paused" for t in tasks)
-        has_done = any(
-            t.status.value in ("completed", "failed", "cancelled") for t in tasks
-        )
+        has_active = any(t.status.is_running for t in tasks)
+        has_paused = any(t.status is TaskStatus.PAUSED for t in tasks)
+        has_done = any(t.status.is_terminal for t in tasks)
 
         self.pause_all_btn.set_state("normal" if (has_active or has_paused) else "disabled")
         self.cancel_all_btn.set_state("normal" if self._task_rows else "disabled")
@@ -3348,7 +2803,7 @@ class MusicDownloaderGUI:
             return
         cancelled = 0
         for t in self._queue.tasks:
-            if t.status.value not in ("completed", "failed", "cancelled"):
+            if not t.status.is_terminal:
                 t.cancel()
                 cancelled += 1
         self._log(f"已取消 {cancelled} 个任务")
@@ -3366,7 +2821,7 @@ class MusicDownloaderGUI:
         to_remove: list[str] = []
         for task_id, row in list(self._task_rows.items()):
             task = self._find_task(task_id)
-            if task is None or task.status.value in ("completed", "failed", "cancelled"):
+            if task is None or task.status.is_terminal:
                 row.destroy_row()
                 to_remove.append(task_id)
 

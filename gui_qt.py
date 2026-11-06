@@ -69,12 +69,12 @@ from pyglass import (
     GlassMaterial, GlassRenderer, GlassStyle, WidgetBackdrop, paint_glass,
 )
 
-# 业务层与主题资产直接复用 tkinter 版实现（纯 Python，不依赖 Tk 运行时）
-from gui import (  # noqa: E402
-    SCHEMES, THEME_MODES, load_settings, save_settings, system_prefers_dark,
-    SearchHistory, ArtistHistory, TipRecordStore, ensure_config_files,
-    TIP_METHODS, TIP_QR_FILES,
+# 业务层与主题资产与 Tkinter 版共用，均无 GUI 框架依赖
+from config import (  # noqa: E402
+    ArtistHistory, SearchHistory, TipRecordStore, ensure_config_files,
+    load_settings, save_settings, TIP_METHODS, TIP_QR_FILES,
 )
+from theme import SCHEMES, THEME_MODES, system_prefers_dark  # noqa: E402
 from api import (  # noqa: E402
     PLATFORM_NAMES, detect_version_risk, fetch_lyrics, resolve_song,
     search_all_platforms, strip_lrc_timestamps,
@@ -84,10 +84,13 @@ from naming import (  # noqa: E402
     DEFAULT_TEMPLATE, PRESET_TEMPLATES, VARIABLES, render_name, sample_meta,
     validate_template,
 )
-from media import CONVERT_FLAC, CONVERT_MP3, CONVERT_OFF, MP3_BITRATES, PostOptions, download_cover, ffmpeg_available  # noqa: E402
+from media import (  # noqa: E402
+    CONVERT_FLAC, CONVERT_MP3, CONVERT_OFF, MP3_BITRATES, PostOptions,
+    download_cover, ffmpeg_available,
+)
 from utils import (  # noqa: E402
     default_download_dir, ensure_download_dir,
-    format_speed, quality_tier, resource_path,
+    format_speed, log, quality_tier, resource_path,
     TIER_HQ, TIER_LABELS, TIER_LOSSLESS, TIER_ORDER, TIER_STANDARD,
     TIER_UNKNOWN,
 )
@@ -519,7 +522,7 @@ def paint_glass_surface(
 
 
 class ThemeManager(QObject):
-    """设计方案 + 外观模式；持久化沿用 gui.py 的 settings.json。"""
+    """设计方案 + 外观模式；通过 config.py 持久化到 settings.json。"""
 
     changed = pyqtSignal()
 
@@ -2708,7 +2711,7 @@ class SettingsDialog(QDialog):
             "QSpinBox::up-button, QSpinBox::down-button { width: 18px; }"
             "QComboBox QAbstractItemView {"
             f" background: {surface}; color: {pal.text};"
-            f" selection-background-color: {pal.accent_soft if hasattr(pal, 'accent_soft') else '#3a7bd5'};"
+            f" selection-background-color: {pal.accent_soft};"
             "}"
             f"QCheckBox {{ color: {pal.text}; spacing: 8px; }}"
             "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;"
@@ -2895,9 +2898,7 @@ class MainWindow(QMainWindow):
         self.tip_store = TipRecordStore()
         self._tip_win: Optional[TipDialogQ] = None
         self._tip_records_win: Optional[TipRecordsQ] = None
-        self.download_dir: str = ensure_download_dir(
-            load_settings().get("download_dir") or default_download_dir()
-        )
+        self.download_dir: str = self._initial_download_dir()
         self._queue: Optional[DownloadQueue] = None
         self._task_rows: dict[str, TaskRow] = {}
         self._queue_running = False
@@ -2976,6 +2977,16 @@ class MainWindow(QMainWindow):
         self._set_status("准备就绪", "info")
         if demo:
             self._seed_demo()
+
+    @staticmethod
+    def _initial_download_dir() -> str:
+        """读取持久化下载目录；目录不可写时回退平台默认目录。"""
+        configured = load_settings().get("download_dir") or default_download_dir()
+        try:
+            return ensure_download_dir(configured)
+        except OSError as exc:
+            log.warning("下载目录不可用（%s），回退默认目录: %s", configured, exc)
+            return ensure_download_dir(default_download_dir())
 
     # ---------- UI 构建 ----------
 
@@ -3851,7 +3862,8 @@ class MainWindow(QMainWindow):
             return
         active = sum(
             1 for t in self._queue.tasks
-            if t.status.value in ("pending", "fetching", "downloading", "paused")
+            if t.status.is_running
+            or t.status in (TaskStatus.PENDING, TaskStatus.PAUSED)
         )
         if active == 0 and self._queue_running:
             self._queue_running = False
@@ -3865,10 +3877,9 @@ class MainWindow(QMainWindow):
                 b.setEnabled(False)
             return
         tasks = self._queue.tasks
-        has_active = any(t.status.value in ("fetching", "downloading") for t in tasks)
-        has_paused = any(t.status.value == "paused" for t in tasks)
-        has_done = any(t.status.value in ("completed", "failed", "cancelled")
-                       for t in tasks)
+        has_active = any(t.status.is_running for t in tasks)
+        has_paused = any(t.status is TaskStatus.PAUSED for t in tasks)
+        has_done = any(t.status.is_terminal for t in tasks)
         self.pause_all_btn.setEnabled(has_active or has_paused)
         self.cancel_all_btn.setEnabled(bool(self._task_rows))
         self.clear_done_btn.setEnabled(has_done)
@@ -3906,7 +3917,7 @@ class MainWindow(QMainWindow):
             return
         cancelled = 0
         for t in self._queue.tasks:
-            if t.status.value not in ("completed", "failed", "cancelled"):
+            if not t.status.is_terminal:
                 t.cancel()
                 cancelled += 1
         self._log(f"已取消 {cancelled} 个任务")
@@ -3924,7 +3935,7 @@ class MainWindow(QMainWindow):
         to_remove = [
             task_id for task_id, row in self._task_rows.items()
             if (task := self._find_task(task_id)) is None
-            or task.status.value in ("completed", "failed", "cancelled")
+            or task.status.is_terminal
         ]
         for task_id in to_remove:
             row = self._task_rows.pop(task_id)

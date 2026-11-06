@@ -1,0 +1,20 @@
+# pylint 项目配置
+[MAIN]
+# PyQt6 各模块为 C 扩展（.so + .pyi），astroid 默认无法内省，
+# 会对所有导入名误报 E0611 no-name-in-module。允许 pylint 真实加载这些扩展。
+extension-pkg-allow-list=PyQt6.QtCore,PyQt6.QtGui,PyQt6.QtWidgets,PyQt6.QtMultimedia
+
+[MESSAGES CONTROL]
+disable=
+    # 本项目为 GUI 应用，44 处 except Exception 均位于 UI 回调/文件IO/网络探测
+    # 边界，是刻意的兜底设计（任何单点异常不得中断界面），非缺陷。
+    broad-exception-caught,
+    # 同模块内协作类（TaskRow/GlassPanel/MainWindow 等）访问下划线成员，
+    # 属模块内部实现细节，非跨边界耦合。
+    protected-access,
+    # Qt 控件普遍采用"构建方法中延迟赋值"模式（_build_ui/_build_xxx 在
+    # __init__ 中调用），属性虽在方法内定义但生命周期等价于构造期。
+    attribute-defined-outside-init,
+    # 可选重型依赖（mutagen / faster-whisper / shazamio）与平台专属模块
+    # （winreg）必须延迟导入，否则缺少任一可选包都会导致主程序无法启动。
+    import-outside-toplevel

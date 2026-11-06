@@ -9,7 +9,7 @@
   · 入口：gui_qt.py；onedir 窗口应用
   · 资源：assets/（品牌图标、打赏码）整体打入
   · ffmpeg：若 installer/bin/ 下存在平台二进制则一并打入，
-    缺失时回退系统 PATH（见 media.py _resolve_ffmpeg）
+    缺失时回退系统 PATH（见 ffmpeg.py resolve_tool）
   · 版本号：installer/VERSION
 """
 
@@ -49,9 +49,9 @@ def collect_assets():
 datas = collect_assets()
 
 # ---- 二进制（可选内置 ffmpeg / ffprobe，来自 installer/bin/）----
-# 静态构建仅依赖系统库，无需额外收集 dylib；运行时由 media.py 按
+# 静态构建仅依赖系统库，无需额外收集 dylib；运行时由 ffmpeg.py 按
 # resource_path("bin", ...) → PATH 的顺序定位。
-# 与 media.py _matches_host_platform 同规则校验魔数：installer/bin/ 可能
+# 与 ffmpeg.py matches_host_platform 同规则校验魔数：installer/bin/ 可能
 # 存放为其他平台准备的二进制（如 Linux .deb 用的 ELF），不可打入本平台包。
 def _matches_host_platform(path):
     try:

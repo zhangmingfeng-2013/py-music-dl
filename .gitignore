@@ -13,7 +13,9 @@ tip_records.json.bak
 tip_records.json.tmp
 LiquidGlassUI/.build
 *.pyc
+# 运行时数据（自动生成，含个人路径/历史/打赏记录，不入库）
+settings.json
 search_history.json
 artist_history.json
+tip_records.json
 test/
-*.pylintrc
