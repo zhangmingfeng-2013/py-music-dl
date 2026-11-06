@@ -232,7 +232,6 @@ py-music-dl/
 ├── music_gui.py      # [v1.0 参考] 旧版 GUI
 ├── start.sh          # 一键启动脚本（macOS / Linux）
 ├── start.bat         # 一键启动脚本（Windows 10 / 11）
-├── LiquidGlassUI/    # Swift 原型参考实现（玻璃效果设计探索）
 ├── assets/           # 界面资源（打赏二维码）
 ├── settings.json     # GUI 主题偏好（自动生成）
 ├── downloaded_music/ # 默认下载目录
