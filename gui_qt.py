@@ -72,9 +72,12 @@ from pyglass import (
 # 业务层与主题资产与 Tkinter 版共用，均无 GUI 框架依赖
 from config import (  # noqa: E402
     ArtistHistory, SearchHistory, TipRecordStore, ensure_config_files,
-    load_settings, save_settings, TIP_METHODS, TIP_QR_FILES,
+    flush_settings, load_settings, save_settings, TIP_METHODS, TIP_QR_FILES,
 )
-from theme import SCHEMES, THEME_MODES, system_prefers_dark  # noqa: E402
+from theme import (  # noqa: E402
+    AppearanceWatcher, SCHEMES, THEME_MODES, THEME_MODE_KEYS, glyph_for,
+    mode_label, normalize_mode, palette_for, system_prefers_dark,
+)
 from api import (  # noqa: E402
     PLATFORM_NAMES, detect_version_risk, fetch_lyrics, resolve_song,
     search_all_platforms, strip_lrc_timestamps,
@@ -525,13 +528,22 @@ class ThemeManager(QObject):
     """设计方案 + 外观模式；通过 config.py 持久化到 settings.json。"""
 
     changed = pyqtSignal()
+    # 后台监视线程 → GUI 线程：跨线程 emit 时 Qt 自动走 QueuedConnection
+    _appearance_ready = pyqtSignal(bool)
 
     def __init__(self) -> None:
         super().__init__()
         settings = load_settings()
         self.scheme_key: str = settings.get("scheme", "liquid")
-        self.theme_mode: str = settings.get("theme_mode", "auto")
+        self.theme_mode: str = normalize_mode(settings.get("theme_mode", "auto"))
         self._detected_dark = system_prefers_dark()
+        self._appearance_ready.connect(self._on_appearance_ready)
+        # 系统外观监视：后台线程探测，变化时经信号切回 GUI 线程
+        self._watch = AppearanceWatcher(
+            3.0, on_change=self._appearance_ready.emit)
+        self._watch.start()
+
+    # ---- 状态 ----
 
     @property
     def dark(self) -> bool:
@@ -541,12 +553,19 @@ class ThemeManager(QObject):
 
     @property
     def palette(self):
-        pal = SCHEMES[self.scheme_key]["dark" if self.dark else "light"]
-        return wcag_safe_palette(pal)
+        return wcag_safe_palette(palette_for(
+            self.scheme_key, self.theme_mode, system_dark=self._detected_dark))
 
     @property
     def glyph(self) -> str:
-        return {"auto": "half", "light": "sun", "dark": "moon"}[self.theme_mode]
+        return glyph_for(self.theme_mode)
+
+    @property
+    def mode_text(self) -> str:
+        """外观模式的中文展示名（不与 theme.mode_label 函数名混淆）。"""
+        return mode_label(self.theme_mode)
+
+    # ---- 变更 ----
 
     def set_scheme(self, key: str) -> None:
         if key in SCHEMES and key != self.scheme_key:
@@ -555,10 +574,22 @@ class ThemeManager(QObject):
             self.changed.emit()
 
     def set_mode(self, mode: str) -> None:
-        if mode in ("auto", "light", "dark") and mode != self.theme_mode:
-            self.theme_mode = mode
-            self._persist()
+        if mode not in THEME_MODE_KEYS or mode == self.theme_mode:
+            return  # 非法输入忽略，不得把用户选择重置为 auto
+        self.theme_mode = mode
+        self._persist()
+        self.changed.emit()
+
+    def _on_appearance_ready(self, dark: bool) -> None:
+        """（GUI 线程）系统外观变化：仅在 auto 模式下触发重绘。"""
+        self._detected_dark = bool(dark)
+        if self.theme_mode == "auto":
             self.changed.emit()
+
+    def shutdown(self) -> None:
+        """停止外观监视线程并补写去抖中的设置（关闭窗口前调用）。"""
+        self._watch.stop()
+        flush_settings()
 
     def _persist(self) -> None:
         save_settings({"scheme": self.scheme_key, "theme_mode": self.theme_mode})
@@ -2903,6 +2934,8 @@ class MainWindow(QMainWindow):
         self._task_rows: dict[str, TaskRow] = {}
         self._queue_running = False
         self._themed: list[Any] = []
+        self._applied_theme = None  # 上次全量重绘使用的调色板（用于跳过重复重绘）
+        self._applied_mode: Optional[str] = None  # 上次同步原生外观时的模式
 
         # 限速设置（KB/s，0 = 不限速）与全局限流器（跨队列共享）
         saved_cfg = load_settings()
@@ -3266,8 +3299,21 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self) -> None:
         pal = self.theme.palette
-        sync_app_palette(pal, self.theme.theme_mode)
+        mode = self.theme.theme_mode
+        applied = self._applied_theme
+        same_palette = applied is not None and (
+            applied.scheme, applied.dark) == (pal.scheme, pal.dark)
+        if same_palette and self._applied_mode == mode:
+            # 令牌与模式都没变：只有符号可能变化，跳过全部重绘
+            self.theme_btn.set_glyph(self.theme.glyph)
+            return
+        self._applied_theme = pal
+        self._applied_mode = mode
+        # 原生窗口外观随模式变化（auto ↔ 手动），必须同步
+        sync_app_palette(pal, mode)
         self.theme_btn.set_glyph(self.theme.glyph)
+        if same_palette:
+            return  # 仅外观模式变化（auto ↔ 手动且明暗相同）：无需重绘控件
         self._divider.setStyleSheet(f"background: {pal.divider};")
         self.tree.setStyleSheet(build_tree_qss(pal))
         self.log_text.setStyleSheet(build_log_qss(pal))
@@ -3359,7 +3405,7 @@ class MainWindow(QMainWindow):
         self._set_status("设计预览：演示数据已载入（搜索/下载不会真正发起）", "info")
         self._log("已进入设计预览模式")
         self._log(f"当前方案: {SCHEMES[self.theme.scheme_key]['name']} · "
-                  f"外观: {dict(THEME_MODES)[self.theme.theme_mode]}")
+                  f"外观: {self.theme.mode_text}")
         self._log("点击右上角圆形按钮可切换 3 套设计方案与浅色/深色外观")
 
     # ---------- 搜索历史 / 目录 ----------
@@ -4221,8 +4267,19 @@ class MainWindow(QMainWindow):
         title = info.get("title") or "未知"
         artist = info.get("artist") or "未知"
         album = info.get("album") or ""
-        self._set_status(f"识别成功: {artist} - {title}", "ok")
-        self._log(f"识歌结果: {artist} - {title}"
+        high = info.get("confidence") == "high"
+        votes = info.get("votes") or ""
+        conf_text = (
+            f"高（{votes} 个窗口一致）" if high and votes
+            else "高（多窗口一致）" if high
+            else "低（仅单窗口命中，建议核对）"
+        )
+        self._set_status(
+            f"识别成功{'（低置信，建议核对）' if not high else ''}: "
+            f"{artist} - {title}",
+            "ok" if high else "warn",
+        )
+        self._log(f"识歌结果（{'高' if high else '低'}置信）: {artist} - {title}"
                   + (f"（专辑: {album}）" if album else ""))
 
         # 结果展示对话框：元数据 + 封面缩略图 + 一键搜索
@@ -4245,7 +4302,8 @@ class MainWindow(QMainWindow):
                 img.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 lay.addWidget(img)
         for label, value in (("歌曲", title), ("歌手", artist),
-                             ("专辑", album), ("流派", info.get("genre") or "")):
+                             ("专辑", album), ("流派", info.get("genre") or ""),
+                             ("置信", conf_text)):
             if not value:
                 continue
             row = QHBoxLayout()
@@ -4318,7 +4376,7 @@ class MainWindow(QMainWindow):
         elif value in ("auto", "light", "dark"):
             self.theme.set_mode(value)
         self._log(f"方案: {SCHEMES[self.theme.scheme_key]['name']} · "
-                  f"外观: {dict(THEME_MODES)[self.theme.theme_mode]}")
+                  f"外观: {self.theme.mode_text}")
 
     def _open_tip_dialog(self) -> None:
         if self._tip_win is not None:
@@ -4352,6 +4410,11 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, e) -> None:  # noqa: N802
         super().resizeEvent(e)
         self.ambient.schedule_refresh()
+
+    def closeEvent(self, e) -> None:  # noqa: N802
+        """关窗：停止外观监视线程并补写去抖中的设置。"""
+        self.theme.shutdown()
+        super().closeEvent(e)
 
 
 # ==================== 程序入口 ====================

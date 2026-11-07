@@ -7,7 +7,10 @@
 
 * :class:`Palette` —— 冻结调色板，包含颜色与圆角/玻璃材质令牌；
 * Liquid / Mono / Aurora 三套方案 × 明暗两种外观；
-* :func:`system_prefers_dark` —— 探测操作系统外观；
+* :func:`palette_for` / :func:`glyph_for` —— 方案 + 外观模式 → 调色板 / 符号，
+  两个前端共用同一套解析规则，避免各自复制映射表；
+* :func:`system_prefers_dark` —— 探测操作系统外观（带缓存）；
+* :class:`AppearanceWatcher` —— 后台线程监视系统外观变化，GUI 线程零阻塞；
 * 色彩混合工具供 Tkinter 版绘制半透明材质复用。
 
 Qt 版与 Tkinter 版共用同一份主题定义，避免两套界面视觉漂移。
@@ -17,6 +20,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Final, Optional
 
@@ -285,20 +290,81 @@ SCHEMES: Final[dict[str, dict[str, Any]]] = {
     },
 }
 
+#: 外观模式 key → 展示名（顺序即菜单顺序）
 THEME_MODES: Final[tuple[tuple[str, str], ...]] = (
     ("auto", "自动（跟随系统）"),
     ("light", "浅色"),
     ("dark", "深色"),
 )
 
+#: 外观模式 key → 主题按钮符号名
+THEME_GLYPHS: Final[dict[str, str]] = {
+    "auto": "half", "light": "sun", "dark": "moon",
+}
+
+#: 合法的外观模式集合（含 "auto"）
+THEME_MODE_KEYS: Final[frozenset[str]] = frozenset(key for key, _ in THEME_MODES)
+
+#: 未知方案 key 的兜底方案
+FALLBACK_SCHEME: Final = "liquid"
+
 
 # ---------------------------------------------------------------------------
-# 系统外观探测
+# 模式 → 调色板 / 符号（两个前端共用同一套解析规则）
 # ---------------------------------------------------------------------------
 
 
-def system_prefers_dark() -> bool:
-    """探测系统外观是否为深色；探测失败按浅色处理。"""
+def normalize_mode(theme_mode: str) -> str:
+    """把任意输入收敛成合法外观模式；未知值按 ``auto`` 处理。"""
+    return theme_mode if theme_mode in THEME_MODE_KEYS else "auto"
+
+
+def resolve_dark(theme_mode: str, *, system_dark: Optional[bool] = None) -> bool:
+    """按外观模式判定是否深色；``auto`` 时采用系统外观。"""
+    mode = normalize_mode(theme_mode)
+    if mode == "auto":
+        if system_dark is None:
+            system_dark = system_prefers_dark()
+        return bool(system_dark)
+    return mode == "dark"
+
+
+def glyph_for(theme_mode: str) -> str:
+    """外观模式对应的主题按钮符号名。"""
+    return THEME_GLYPHS[normalize_mode(theme_mode)]
+
+
+def mode_label(theme_mode: str) -> str:
+    """外观模式的中文展示名。"""
+    return dict(THEME_MODES)[normalize_mode(theme_mode)]
+
+
+def palette_for(
+    scheme: str, theme_mode: str = "auto", *,
+    system_dark: Optional[bool] = None,
+) -> Palette:
+    """按方案 + 外观模式取生效调色板（未知方案回退 Liquid）。"""
+    entry = SCHEMES.get(scheme) or SCHEMES[FALLBACK_SCHEME]
+    dark = resolve_dark(theme_mode, system_dark=system_dark)
+    pal = entry["dark" if dark else "light"]
+    return pal
+
+
+# ---------------------------------------------------------------------------
+# 系统外观探测（带缓存 + 后台监视）
+# ---------------------------------------------------------------------------
+
+#: 缓存有效期（秒）：必须显著大于 :class:`AppearanceWatcher` 的轮询间隔，
+#: 否则 GUI 线程每次查询都恰好落在过期边界，仍会同步拉起子进程
+APPEARANCE_TTL: Final = 10.0
+
+_lock = threading.Lock()
+_cached_dark: Optional[bool] = None
+_cached_at: float = 0.0
+
+
+def _probe_system_dark() -> bool:
+    """真正执行系统外观探测；可能阻塞（子进程超时 2 秒），不得在 GUI 线程频繁调用。"""
     try:
         if sys.platform == "darwin":
             result = subprocess.run(
@@ -322,3 +388,102 @@ def system_prefers_dark() -> bool:
         return "dark" in result.stdout
     except Exception:  # noqa: BLE001  外观探测失败时回退浅色
         return False
+
+
+def _store_appearance(dark: bool) -> None:
+    """写入探测缓存（后台线程与主线程共用）。"""
+    global _cached_dark, _cached_at  # pylint: disable=global-statement
+    with _lock:
+        _cached_dark = bool(dark)
+        _cached_at = time.monotonic()
+
+
+def cached_appearance() -> Optional[bool]:
+    """读取缓存中的系统外观；从未探测或已过期时返回 ``None``（不阻塞）。"""
+    with _lock:
+        if _cached_dark is None or time.monotonic() - _cached_at >= APPEARANCE_TTL:
+            return None
+        return _cached_dark
+
+
+def invalidate_appearance_cache() -> None:
+    """丢弃缓存，下次查询重新探测（系统外观已变化、测试隔离时使用）。"""
+    global _cached_dark, _cached_at  # pylint: disable=global-statement
+    with _lock:
+        _cached_dark = None
+        _cached_at = 0.0
+
+
+def system_prefers_dark(refresh: bool = False) -> bool:
+    """探测系统外观是否为深色；探测失败按浅色处理。
+
+    结果带 :data:`APPEARANCE_TTL` 秒缓存：焦点、菜单、重绘等高频查询
+    直接命中缓存，不会反复拉起 ``defaults``/``gsettings`` 子进程。
+    ``refresh=True`` 强制绕过缓存重新探测。
+    """
+    if not refresh:
+        cached = cached_appearance()
+        if cached is not None:
+            return cached
+    dark = _probe_system_dark()
+    _store_appearance(dark)
+    return dark
+
+
+class AppearanceWatcher:
+    """后台线程轮询系统外观，变化时回调。
+
+    让 GUI 主线程不再为“系统外观是否变了”付出子进程开销：主线程只读缓存
+    （:func:`cached_appearance`），昂贵探测全部落在守护线程里。
+
+    ``on_change`` 在**后台线程**被调用，GUI 必须自行切回主线程
+    （Tk 用 ``root.after``，Qt 用信号）。
+    """
+
+    def __init__(self, interval: float = 3.0, on_change=None) -> None:
+        self.interval = max(0.5, float(interval))
+        self._on_change = on_change
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._known: Optional[bool] = None
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self) -> None:
+        """启动监视线程（重复调用无副作用）。"""
+        if self.running:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run, name="appearance-watcher", daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """停止监视线程并等待其退出（最多一个轮询间隔）。"""
+        self._stop.set()
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=self.interval + 1.0)
+
+    def _notify(self, dark: bool) -> None:
+        if self._on_change is None:
+            return
+        try:
+            self._on_change(dark)
+        except Exception:  # noqa: BLE001  回调异常不得终止监视线程
+            pass
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            dark = _probe_system_dark()
+            _store_appearance(dark)
+            if self._known is None:
+                self._known = dark
+            elif dark != self._known:
+                self._known = dark
+                self._notify(dark)
+            self._stop.wait(self.interval)

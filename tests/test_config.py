@@ -98,6 +98,45 @@ class TestSettings:
         save_settings({"scheme": "aurora"}, str(path))
         assert json.loads(path.read_text(encoding="utf-8"))["scheme"] == "aurora"
 
+    def test_default_path_write_is_debounced(self, tmp_path, monkeypatch):
+        """连续切换主题只落盘一次：最后一笔数据合并写入。"""
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({"custom": 1}), encoding="utf-8")
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(path))
+        monkeypatch.setattr(config, "SAVE_DEBOUNCE", 0.05)
+
+        save_settings({"scheme": "mono"})
+        save_settings({"theme_mode": "dark"})
+        # 写还在去抖窗口内，磁盘尚未更新
+        assert "scheme" not in json.loads(path.read_text(encoding="utf-8"))
+
+        config.flush_settings()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data == {"custom": 1, "scheme": "mono", "theme_mode": "dark"}
+
+    def test_debounce_collapses_to_one_write(self, tmp_path, monkeypatch):
+        path = tmp_path / "settings.json"
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(path))
+        monkeypatch.setattr(config, "SAVE_DEBOUNCE", 0.05)
+        writes = []
+        original = config._write_settings
+
+        def counting(settings_path, data):
+            writes.append(settings_path)
+            original(settings_path, data)
+
+        monkeypatch.setattr(config, "_write_settings", counting)
+        for scheme in ("mono", "aurora", "liquid", "mono"):
+            save_settings({"scheme": scheme})
+        config.flush_settings()
+        assert len(writes) == 1
+        assert json.loads(path.read_text(encoding="utf-8"))["scheme"] == "mono"
+
+    def test_flush_without_pending_is_noop(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "s.json"))
+        config.flush_settings()  # 不应抛错
+        assert not (tmp_path / "s.json").exists()
+
 
 class TestEnsureConfigFiles:
     def test_creates_missing_and_does_not_overwrite(self, tmp_path, monkeypatch):

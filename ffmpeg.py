@@ -141,7 +141,32 @@ def output_is_valid(result: Optional[subprocess.CompletedProcess],
     )
 
 
-def extract_pcm_wav(src: str, *, duration: Optional[float] = None,
+def probe_duration(src: str, *, timeout: float = 10.0) -> float:
+    """读取媒体时长（秒）；无法读取时返回 ``0.0``。
+
+    识歌按比例挑选采样窗口依赖时长，探测失败不应阻断流程，
+    因此所有异常路径统一降级为 ``0.0`` 由调用方按单窗口处理。
+    """
+    if not src or not os.path.isfile(src):
+        return 0.0
+    result = run_ffmpeg(
+        ["-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", src],
+        timeout=timeout, quiet=True, binary=FFPROBE_BIN,
+    )
+    if result is None or result.returncode != 0:
+        return 0.0
+    try:
+        value = float(result.stdout.decode("utf-8", "ignore").strip())
+    except (TypeError, ValueError):
+        return 0.0
+    return value if value > 0 else 0.0
+
+
+# 6 个参数均为独立的可选转码控制项，拆配置对象只会增加调用方负担
+# pylint: disable-next=too-many-arguments
+def extract_pcm_wav(src: str, *, start: Optional[float] = None,
+                    duration: Optional[float] = None,
                     sample_rate: int = 16000,
                     channels: int = 1,
                     timeout: float = 60.0) -> Optional[str]:
@@ -149,7 +174,8 @@ def extract_pcm_wav(src: str, *, duration: Optional[float] = None,
 
     Args:
         src: 源音频路径。
-        duration: 仅截取前 N 秒（识歌场景用）；``None`` 表示完整音频。
+        start: 从第 N 秒开始截取（识歌多窗口采样用）；``None`` 表示从头。
+        duration: 截取时长；``None`` 表示到音频结束。
         sample_rate: 采样率。
         channels: 声道数。
         timeout: ffmpeg 超时（秒）。
@@ -163,8 +189,11 @@ def extract_pcm_wav(src: str, *, duration: Optional[float] = None,
     destination = _new_temp_path(".wav")
     args = [
         "-y", "-nostdin", "-loglevel", "error",
-        "-i", src,
     ]
+    if start is not None and start > 0:
+        # -ss 置于 -i 之前为快速定位（输入 seek），对音频无损且免解码全片
+        args += ["-ss", str(float(start))]
+    args += ["-i", src]
     if duration is not None and duration > 0:
         args += ["-t", str(float(duration))]
     args += [

@@ -35,7 +35,7 @@
 
 ```
 config.py   设置 / 搜索历史 / 歌手历史 / 打赏记录 / 启动配置文件创建
-theme.py    Palette / 三套配色 / 色彩混合 / 系统深浅色探测
+theme.py    Palette / 三套配色 / 色彩混合 / 模式→调色板解析 / 系统深浅色探测（缓存 + 后台监视）
 ```
 
 * `gui.py` 从这两个模块导入，并保留原有模块级名字（如 `gui.SCHEMES`、
@@ -163,9 +163,9 @@ run_ffmpeg() / output_is_valid() / extract_pcm_wav()
 | `test_ffmpeg.py` | 平台魔数、工具定位、WAV 提取、临时文件清理 |
 | `test_transcribe.py` | LRC 时间轴/拆分/去重、元信息透传、解码回退 |
 | `test_recognize.py` | Shazam 结果解析、入口边界 |
-| `test_config.py` | 设置校验/合并/原子写入、历史、打赏记录、损坏备份 |
+| `test_config.py` | 设置校验/合并/原子写入/写入去抖、历史、打赏记录、损坏备份 |
 | `test_cli.py` | 多选解析、表格、进度输出、入队与汇总 |
-| `test_theme.py` | 色彩运算、调色板完整性、系统外观探测 |
+| `test_theme.py` | 色彩运算、调色板完整性、外观探测缓存、模式解析、后台监视 |
 | `test_architecture.py` | Qt GUI 不依赖 Tkinter、核心层无 GUI 依赖、公共 API 兼容 |
 | `test_ffmpeg_detect.py` / `test_qt_plugins_visible.py` | 历史回归（ffmpeg 魔数、Qt 插件自愈） |
 

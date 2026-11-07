@@ -38,7 +38,7 @@
 | 元数据补全 | MP3 写 ID3v2.3（标题 / 歌手 / 专辑 / 年份 / 封面 / 歌词），FLAC 写 Vorbis Comment + Picture |
 | 歌词获取 | 平台直取 LRC → 网易云 ID → 网易云模糊搜索 → lrclib 四级兜底；可存同名 `.lrc` 或内嵌音频标签，歌词窗口支持 LRC / 纯文本切换预览 |
 | Whisper 歌词兜底 | 所有检索均失败且音频已下载时，本地 faster-whisper 语音识别生成带时间轴的 LRC 歌词 |
-| 音频指纹识歌 | 基于 Shazam 协议（shazamio，免 Key），支持主流格式，截取前 15 秒识别，返回歌名 / 歌手 / 专辑 / 封面 |
+| 音频指纹识歌 | 基于 Shazam 协议（shazamio，免 Key），支持主流格式；多窗口采样 + 命中偏移校验 + 多窗口共识投票，误报率大幅下降，中文歌名 / 歌手本地化 |
 | 自定义命名模板 | `{title}` `{artist}` `{album}` `{year}` `{source}` `{quality}` 六变量占位，预设快捷选择、实时预览、语法高亮、导入导出，异常三级回退不阻塞下载 |
 | 历史记录 | 搜索关键词与歌手历史持久化，下拉补全 |
 | 多主题 | 3 套设计方案（Liquid / Mono / Aurora）× 自动 / 浅色 / 深色外观，偏好自动持久化 |
@@ -126,7 +126,7 @@ start.bat --check
 3. **试听**：选中歌曲点击「试听」，底部迷你播放条后台取流播放，支持播放 / 暂停 / 停止 / 进度拖拽
 4. **下载**：`Ctrl/Shift+点击` 多选 → 加入下载队列；任务行显示 `进度% · 速度 · 已下/总大小`，支持暂停 / 恢复 / 取消；同名文件冲突可选 覆盖 / 跳过 / 重命名
 5. **设置**：顶栏齿轮按钮打开设置弹窗——单任务 / 全局限速、转码格式与码率、元数据 / 封面 / 歌词开关、Whisper 兜底开关、命名模板编辑（实时预览 + 语法高亮 + 导入导出），全部即时生效并持久化
-6. **识歌**：工具栏「识歌」选择本地音频文件，指纹识别返回歌名 / 歌手 / 专辑 / 封面
+6. **识歌**：工具栏「识歌」选择本地音频文件，多窗口指纹识别返回歌名 / 歌手 / 专辑 / 封面，并标注置信度（多窗口一致 / 单窗口命中）
 7. **歌词**：工具栏「歌词」弹出预览窗，一键切换 LRC / 纯文本
 
 ### CLI 模式
@@ -173,9 +173,9 @@ python3 cli.py
 | `media.py` | `ffmpeg_available()` / `PostOptions` / `post_process` | 转码、歌词落盘、MP3/FLAC 标签后处理 |
 | `ffmpeg.py` | `resolve_tool()` / `extract_pcm_wav()` | ffmpeg 定位、平台魔数校验、统一调用与临时 WAV 提取 |
 | `transcribe.py` | Whisper 歌词转写 | faster-whisper 本地识别，句末标点拆分 + 时间插值输出 LRC |
-| `recognize.py` | 音频指纹识歌 | shazamio，统一截前 15 秒转 16kHz mono，3 秒硬超时 |
-| `config.py` | `load_settings()` / `SearchHistory` / `TipRecordStore` | 设置、历史、打赏记录的统一持久化（原子写入） |
-| `theme.py` | `SCHEMES` / `Palette` | 三套配色与系统深浅色探测，Tkinter / Qt 共用 |
+| `recognize.py` | 音频指纹识歌 | shazamio，多窗口 12s 采样 + 偏移校验 + 共识投票，中文元数据，20 秒总预算 |
+| `config.py` | `load_settings()` / `SearchHistory` / `TipRecordStore` | 设置、历史、打赏记录的统一持久化（原子写入；设置写入去抖） |
+| `theme.py` | `SCHEMES` / `Palette` / `palette_for()` | 三套配色与模式解析；系统深浅色探测带缓存 + 后台监视，Tkinter / Qt 共用 |
 | `utils.py` | `quality_tier` / `safe_filename` / `format_size` | 音质档位、文件名清理、格式化、JSON 读写工具 |
 
 ```python
@@ -351,7 +351,7 @@ powershell build_windows.ps1   # Windows（PyInstaller + Inno Setup）
 - **音频后处理链路** — ffmpeg 转码（MP3/FLAC）、ID3 / Vorbis 元数据与封面歌词写入、四级歌词兜底
 - **自定义文件命名模板** — 6 变量占位、实时预览、语法高亮、导入导出、异常三级回退
 - **Whisper 歌词兜底** — 检索失败时本地 faster-whisper 转写生成带时间轴 LRC
-- **音频指纹识歌** — shazamio 免 Key 识别本地音频，返回完整元数据
+- **音频指纹识歌** — shazamio 免 Key 识别本地音频，多窗口采样 + 偏移校验 + 共识投票抑制误报，返回完整元数据
 - **版本风险识别** — 伴奏拦截 + 翻唱/现场/Remix 提示，结果列表新增版本列
 - **双重限速与任务面板增强** — 令牌桶单任务/全局限速，任务行实时速度·进度，面板总速度汇总
 - **内置试听播放条** — QMediaPlayer 迷你播放，进度拖拽

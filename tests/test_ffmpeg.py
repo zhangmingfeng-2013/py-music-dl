@@ -83,5 +83,46 @@ def test_extract_wav(tmp_path):
         ffmpeg.remove_temp_file(extracted)
 
 
+def _make_tone(tmp_path, seconds: float):
+    source = tmp_path / "tone.wav"
+    generated = ffmpeg.run_ffmpeg([
+        "-y", "-nostdin", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+        "-c:a", "pcm_s16le", str(source),
+    ])
+    assert generated is not None and generated.returncode == 0
+    return str(source)
+
+
+def _ffprobe_available() -> bool:
+    result = ffmpeg.run_ffmpeg(
+        ["-version"], timeout=5, quiet=True, binary=ffmpeg.FFPROBE_BIN)
+    return result is not None and result.returncode == 0
+
+
+@pytest.mark.skipif(not ffmpeg.ffmpeg_available(), reason="需要 ffmpeg")
+def test_probe_duration(tmp_path):
+    source = _make_tone(tmp_path, 1.0)
+    if not _ffprobe_available():
+        pytest.skip("需要 ffprobe")
+    assert ffmpeg.probe_duration(source) == pytest.approx(1.0, abs=0.05)
+    assert ffmpeg.probe_duration(str(tmp_path / "missing.mp3")) == 0.0
+
+
+@pytest.mark.skipif(not ffmpeg.ffmpeg_available(), reason="需要 ffmpeg")
+def test_extract_wav_with_start_offset(tmp_path):
+    source = _make_tone(tmp_path, 2.0)
+    extracted = ffmpeg.extract_pcm_wav(
+        source, start=1.0, duration=0.5, timeout=20)
+    assert extracted is not None
+    try:
+        assert os.path.getsize(extracted) > 0
+        if _ffprobe_available():
+            assert ffmpeg.probe_duration(extracted) == pytest.approx(
+                0.5, abs=0.1)
+    finally:
+        ffmpeg.remove_temp_file(extracted)
+
+
 if __name__ == "__main__":
     raise SystemExit("请使用 pytest 运行该测试文件")

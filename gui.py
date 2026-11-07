@@ -38,10 +38,12 @@ from downloader import DownloadQueue, DownloadTask, TaskStatus
 from config import (
     ArtistHistory, SearchHistory, TipRecordStore,
     TIP_METHODS, TIP_QR_FILES, ensure_config_files,
-    load_settings, save_settings,
+    flush_settings, load_settings, save_settings,
 )
 from theme import (
-    Palette, SCHEMES, THEME_MODES, blend, mix, system_prefers_dark,
+    AppearanceWatcher, Palette, SCHEMES, THEME_MODES, THEME_MODE_KEYS,
+    blend, cached_appearance, glyph_for, mix, mode_label, normalize_mode,
+    palette_for, system_prefers_dark,
 )
 from utils import DEFAULT_DOWNLOAD_DIR, ensure_download_dir, format_size
 
@@ -1762,9 +1764,16 @@ class MusicDownloaderGUI:
         # 用户偏好：设计方案 + 外观模式（auto / light / dark）
         self.settings = load_settings()
         self.scheme_key: str = self.settings["scheme"]
-        self.theme_mode: str = self.settings["theme_mode"]
+        self.theme_mode: str = normalize_mode(self.settings["theme_mode"])
+        # 系统外观探测带缓存；之后由后台 AppearanceWatcher 刷新，
+        # GUI 线程不再为它付子进程开销
         self._detected_dark = system_prefers_dark()
-        apply_palette(self._active_palette())
+        initial = palette_for(
+            self.scheme_key, self.theme_mode, system_dark=self._detected_dark)
+        # 上次全量重绘的令牌签名（方案 + 模式 + 明暗），用于跳过无变化的重绘
+        self._applied_key: Optional[tuple[str, str, bool]] = (
+            self.scheme_key, self.theme_mode, initial.dark)
+        apply_palette(initial)
 
         self.search_results: list[dict[str, Any]] = []
         self.filtered_results: list[dict[str, Any]] = []
@@ -1790,6 +1799,17 @@ class MusicDownloaderGUI:
         self._setup_ui()
         self._apply_palette_to_static()
 
+        # 系统外观监视：后台线程探测，结果经 _poll_system_dark 回到 GUI 线程
+        # （Tk 不允许跨线程操作控件，故后台回调只写共享变量）
+        self._appearance_lock = threading.Lock()
+        self._pending_dark: Optional[bool] = None
+        self._appearance_poll: Optional[str] = None
+        self._appearance_watch = AppearanceWatcher(
+            3.0, on_change=self._queue_system_dark)
+        self._appearance_watch.start()
+        self._appearance_poll = self.root.after(500, self._poll_system_dark)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+
         self.root.bind("<FocusIn>", self._on_window_focus)
         self._set_status("准备就绪", "info")
 
@@ -1798,11 +1818,11 @@ class MusicDownloaderGUI:
 
     def _active_palette(self) -> Palette:
         """根据方案 + 外观模式（环境探测或手动指定）取生效调色板"""
-        dark = self._detected_dark if self.theme_mode == "auto" else self.theme_mode == "dark"
-        return SCHEMES[self.scheme_key]["dark" if dark else "light"]
+        return palette_for(
+            self.scheme_key, self.theme_mode, system_dark=self._detected_dark)
 
     def _theme_glyph(self) -> str:
-        return {"auto": "half", "light": "sun", "dark": "moon"}[self.theme_mode]
+        return glyph_for(self.theme_mode)
 
     # ---- 主题 ----
 
@@ -1906,9 +1926,11 @@ class MusicDownloaderGUI:
         apply_palette(p)  # 通知全部注册组件重绘
 
     def set_theme_mode(self, mode: str) -> None:
+        if mode not in THEME_MODE_KEYS or mode == self.theme_mode:
+            return  # 非法输入忽略，不得把用户选择重置为 auto
         self.theme_mode = mode
         self.settings["theme_mode"] = mode
-        save_settings(self.settings)
+        save_settings(self.settings)  # 去抖：连续切换只落盘一次
         self._refresh_theme()
 
     def set_scheme(self, key: str) -> None:
@@ -1916,23 +1938,80 @@ class MusicDownloaderGUI:
             return
         self.scheme_key = key
         self.settings["scheme"] = key
-        save_settings(self.settings)
+        save_settings(self.settings)  # 去抖：连续切换只落盘一次
         self._refresh_theme()
         self._log(f"设计方案已切换: {SCHEMES[key]['name']}")
 
     def _refresh_theme(self) -> None:
+        """重绘主题；生效令牌未变化时跳过全量重绘。"""
         if self.theme_mode == "auto":
-            self._detected_dark = system_prefers_dark()
-        apply_palette(self._active_palette())
+            # 只读缓存（后台 watcher 每 3 秒刷新）；缓存意外为空才同步探测一次
+            detected = cached_appearance()
+            if detected is None:
+                detected = system_prefers_dark()
+            if detected != self._detected_dark:
+                self._detected_dark = detected
+        palette = self._active_palette()
+        # 签名含 dark：auto 与手动同色时仍算一次真实变化（原生外观需同步）
+        key = (self.scheme_key, self.theme_mode, palette.dark)
+        if key == self._applied_key:
+            # 令牌一致：跳过全量重绘，但符号仍要跟随模式（改动极小）
+            self.theme_btn.set_glyph(self._theme_glyph())
+            return
+        self._applied_key = key
+        apply_palette(palette)
         self._apply_palette()
         self.theme_btn.set_glyph(self._theme_glyph())
 
+    def _apply_system_dark(self, dark: bool) -> None:
+        self._detected_dark = bool(dark)
+        self._refresh_theme()
+
+    def _queue_system_dark(self, dark: bool) -> None:
+        """后台监视线程回调：只记录待处理值，绝不触碰 Tk 对象。"""
+        with self._appearance_lock:
+            self._pending_dark = bool(dark)
+
+    def _poll_system_dark(self) -> None:
+        """（GUI 线程）取出后台探测结果并重绘；无结果时继续轮询。"""
+        with self._appearance_lock:
+            dark = self._pending_dark
+            self._pending_dark = None
+        if dark is not None:
+            self._apply_system_dark(dark)
+        if self._appearance_poll is None:
+            return  # 已关窗
+        try:
+            self._appearance_poll = self.root.after(500, self._poll_system_dark)
+        except tk.TclError:
+            self._appearance_poll = None  # 窗口已销毁
+
     def _on_window_focus(self, _e: tk.Event) -> None:
-        if self.theme_mode == "auto":
-            dark = system_prefers_dark()
-            if dark != self._detected_dark:
-                self._detected_dark = dark
-                self._refresh_theme()
+        """窗口获得焦点时用后台缓存校正 auto 外观（不拉子进程、不阻塞）。"""
+        if self.theme_mode != "auto":
+            return
+        detected = cached_appearance()
+        if detected is None or detected == self._detected_dark:
+            return
+        self._detected_dark = detected
+        self._refresh_theme()
+
+    def _on_close_window(self) -> None:
+        """关窗：停止外观监视线程并补写去抖中的设置，随后销毁窗口。"""
+        watcher = getattr(self, "_appearance_watch", None)
+        if watcher is not None:
+            watcher.stop()
+        if self._appearance_poll is not None:
+            try:
+                self.root.after_cancel(self._appearance_poll)
+            except tk.TclError:
+                pass
+            self._appearance_poll = None
+        flush_settings()  # 去抖中的主题设置不得丢失
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
     def _show_theme_menu(self) -> None:
         p = PAL
@@ -2429,7 +2508,7 @@ class MusicDownloaderGUI:
         self._set_status("设计预览：演示数据已载入（搜索/下载不会真正发起）", "info")
         self._log("已进入设计预览模式")
         self._log(f"当前方案: {SCHEMES[self.scheme_key]['name']} · "
-                  f"外观: {dict(THEME_MODES)[self.theme_mode]}")
+                  f"外观: {mode_label(self.theme_mode)}")
         self._log("点击右上角圆形按钮可切换 3 套设计方案与浅色/深色外观")
 
     # ---- 搜索历史 / 目录 ----

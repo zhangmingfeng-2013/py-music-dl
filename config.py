@@ -15,12 +15,14 @@
 
 from __future__ import annotations
 
+import atexit
 import os
+import threading
 import time
 from typing import Any, Final, Optional
 
 from naming import DEFAULT_TEMPLATE, validate_template
-from theme import SCHEMES
+from theme import SCHEMES, THEME_MODE_KEYS
 from utils import (
     load_json,
     log,
@@ -68,7 +70,6 @@ _BOOL_SETTINGS: Final = (
 _SPEED_SETTINGS: Final = ("per_task_speed", "global_speed")
 _CONVERT_MODES: Final = ("off", "mp3", "flac")
 _MP3_BITRATES: Final = (128, 192, 320)
-_THEME_MODES: Final = ("auto", "light", "dark")
 
 # ---------------------------------------------------------------------------
 # 打赏记录
@@ -93,7 +94,7 @@ def _sanitize_settings(saved: dict[str, Any]) -> dict[str, Any]:
 
     if saved.get("scheme") in SCHEMES:
         data["scheme"] = saved["scheme"]
-    if saved.get("theme_mode") in _THEME_MODES:
+    if saved.get("theme_mode") in THEME_MODE_KEYS:
         data["theme_mode"] = saved["theme_mode"]
 
     download_dir = saved.get("download_dir")
@@ -137,9 +138,8 @@ def load_settings(path: Optional[str] = None) -> dict[str, Any]:
     return _sanitize_settings(saved)
 
 
-def save_settings(data: dict[str, Any], path: Optional[str] = None) -> None:
-    """合并写入设置：保留文件中已有的其他键，原子替换。"""
-    settings_path = path or SETTINGS_FILE
+def _write_settings(settings_path: str, data: dict[str, Any]) -> None:
+    """合并写入一次：保留文件中已有的其他键，原子替换。"""
     merged: dict[str, Any] = {}
     old = load_json(settings_path, {})
     if isinstance(old, dict):
@@ -148,6 +148,66 @@ def save_settings(data: dict[str, Any], path: Optional[str] = None) -> None:
         merged.update(data)
     if not save_json_atomic(settings_path, merged):
         log.warning("设置保存失败: %s", settings_path)
+
+
+#: 去抖窗口（秒）：连续切换方案/外观只落盘一次
+SAVE_DEBOUNCE: Final = 0.25
+
+_save_lock = threading.Lock()
+_pending: dict[str, dict[str, Any]] = {}
+_timer: Optional[threading.Timer] = None
+
+
+def _flush_pending() -> None:
+    """把累积的待写数据一次性落盘（线程安全，可被定时器/退出流程调用）。"""
+    global _timer  # pylint: disable=global-statement
+    with _save_lock:
+        pending = dict(_pending)
+        _pending.clear()
+        _timer = None
+    for settings_path, data in pending.items():
+        _write_settings(settings_path, data)
+
+
+def flush_settings() -> None:
+    """立即写出所有待写设置（程序退出前调用，避免丢最后一次切换）。"""
+    global _timer  # pylint: disable=global-statement
+    with _save_lock:
+        timer = _timer
+        _timer = None
+        has_pending = bool(_pending)
+    if timer is not None:
+        timer.cancel()
+    if has_pending:
+        _flush_pending()
+
+
+# 进程正常退出（含 GUI 直接 sys.exit）时兜底补写去抖中的设置
+atexit.register(flush_settings)
+
+
+def save_settings(data: dict[str, Any], path: Optional[str] = None) -> None:
+    """合并写入设置（保留文件中已有的其他键，原子替换）。
+
+    默认设置文件走**去抖**写入：``SAVE_DEBOUNCE`` 窗口内的多次调用合并成
+    一次落盘，适用于主题切换这类高频写场景（一次切换只写一次文件）。显式
+    传入 ``path`` 时立即写入，因为是调用方（测试 / 一次性迁移）明确期待
+    同步生效。进程退出时 :func:`flush_settings` 会兜底补写。
+    """
+    settings_path = path or SETTINGS_FILE
+    if path is not None:
+        _write_settings(settings_path, data)
+        return
+    global _timer  # pylint: disable=global-statement
+    with _save_lock:
+        bucket = _pending.setdefault(settings_path, {})
+        if isinstance(data, dict):
+            bucket.update(data)
+        if _timer is not None:
+            _timer.cancel()
+        _timer = threading.Timer(SAVE_DEBOUNCE, _flush_pending)
+        _timer.daemon = True
+        _timer.start()
 
 
 def ensure_config_files() -> None:
